@@ -1,0 +1,83 @@
+"""Pure asyncio daily/periodic scheduler using zoneinfo."""
+
+import asyncio
+import logging
+from collections.abc import Awaitable, Callable
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+logger = logging.getLogger(__name__)
+
+ScheduleCallback = Callable[[], Awaitable[object]]
+
+
+class Scheduler:
+    """asyncio-based scheduler with daily and periodic tasks."""
+
+    def __init__(self, timezone: str) -> None:
+        self._tz = ZoneInfo(timezone)
+        self._tasks: list[asyncio.Task[None]] = []
+        self._running = False
+
+    def schedule_daily(
+        self,
+        time_str: str,
+        callback: ScheduleCallback,
+        name: str = "",
+    ) -> None:
+        """Schedule a callback to run daily at a specific time (HH:MM)."""
+        hour, minute = (int(x) for x in time_str.split(":"))
+
+        async def _loop() -> None:
+            while self._running:
+                now = datetime.now(self._tz)
+                target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                if target <= now:
+                    target += timedelta(days=1)
+                wait_seconds = (target - now).total_seconds()
+                label = name or f"daily@{time_str}"
+                logger.info("Scheduler: %s next run in %.0fs", label, wait_seconds)
+                await asyncio.sleep(wait_seconds)
+                if not self._running:
+                    break
+                try:
+                    await callback()
+                except Exception:
+                    logger.exception("Scheduler: %s failed", label)
+
+        self._tasks.append(asyncio.ensure_future(_loop()))
+
+    def schedule_periodic(
+        self,
+        interval_seconds: float,
+        callback: ScheduleCallback,
+        name: str = "",
+    ) -> None:
+        """Schedule a callback to run every interval_seconds."""
+
+        async def _loop() -> None:
+            while self._running:
+                await asyncio.sleep(interval_seconds)
+                if not self._running:
+                    break
+                label = name or f"periodic@{interval_seconds}s"
+                try:
+                    await callback()
+                except Exception:
+                    logger.exception("Scheduler: %s failed", label)
+
+        self._tasks.append(asyncio.ensure_future(_loop()))
+
+    async def start(self) -> None:
+        """Start the scheduler."""
+        self._running = True
+        logger.info("Scheduler started (tz=%s)", self._tz)
+
+    async def stop(self) -> None:
+        """Stop the scheduler and cancel all tasks."""
+        self._running = False
+        for task in self._tasks:
+            task.cancel()
+        await asyncio.gather(*self._tasks, return_exceptions=True)
+        self._tasks.clear()
+        logger.info("Scheduler stopped")

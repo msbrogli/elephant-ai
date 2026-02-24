@@ -1,0 +1,21 @@
+version: "3.9"
+services:
+  my_little_elephant:
+    build: .
+    container_name: my_little_elephant
+    restart: unless-stopped
+    volumes:
+      - /data/elephant:/app/data
+      - /media/library:/app/media
+      - /config:/app/config:ro
+    environment:
+      - TZ=America/Chicago
+      - CONFIG_PATH=/app/config/config.yaml
+      - DATA_DIR=/app/data
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
