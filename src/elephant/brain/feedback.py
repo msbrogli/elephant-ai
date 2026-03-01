@@ -3,7 +3,7 @@
 import logging
 from typing import Any
 
-from elephant.data.models import Event, NostalgiaWeights, PreferencesFile
+from elephant.data.models import Memory, NostalgiaWeights, PreferencesFile
 from elephant.data.store import DataStore
 from elephant.git_ops import GitRepo
 from elephant.llm.client import LLMClient
@@ -34,12 +34,12 @@ async def classify_feedback_sentiment(
     return "neutral"
 
 
-def extract_event_features(events: list[Event]) -> dict[str, Any]:
-    """Extract features from digest events for weight adjustment."""
-    has_milestone = any(e.type in ("milestone", "celebration") for e in events)
-    has_mundane = any(e.type not in ("milestone", "celebration") for e in events)
-    avg_people = sum(len(e.people) for e in events) / max(len(events), 1)
-    has_location = any(e.location for e in events)
+def extract_memory_features(memories: list[Memory]) -> dict[str, Any]:
+    """Extract features from digest memories for weight adjustment."""
+    has_milestone = any(m.type in ("milestone", "celebration") for m in memories)
+    has_mundane = any(m.type not in ("milestone", "celebration") for m in memories)
+    avg_people = sum(len(m.people) for m in memories) / max(len(memories), 1)
+    has_location = any(m.location for m in memories)
     return {
         "has_milestone": has_milestone,
         "has_mundane": has_mundane,
@@ -48,12 +48,14 @@ def extract_event_features(events: list[Event]) -> dict[str, Any]:
     }
 
 
+
+
 def adjust_weights(
     prefs: PreferencesFile,
     sentiment: str,
     features: dict[str, Any],
 ) -> PreferencesFile:
-    """Adjust nostalgia weights based on sentiment and event features.
+    """Adjust nostalgia weights based on sentiment and memory features.
 
     Positive feedback: boost matching weights by +WEIGHT_STEP
     Negative feedback: reduce matching weights by -WEIGHT_STEP
@@ -87,12 +89,14 @@ def adjust_weights(
             location_focus=new_location,
         ),
         tone_preference=prefs.tone_preference,
+        locations=prefs.locations,
+        notes=prefs.notes,
     )
 
 
 async def process_feedback(
     text: str,
-    digest_event_ids: list[str],
+    digest_memory_ids: list[str],
     llm: LLMClient,
     model: str,
     store: DataStore,
@@ -101,28 +105,26 @@ async def process_feedback(
     """Full feedback processing: classify, adjust weights, commit."""
     sentiment = await classify_feedback_sentiment(text, llm, model)
 
-    # Load events from digest
-    events: list[Event] = []
-    for eid in digest_event_ids:
-        # Try to find the event file by walking the store
-        # Event IDs have format YYYYMMDD_slug
-        if len(eid) >= 8 and eid[:8].isdigit():
+    # Load memories from digest
+    memories: list[Memory] = []
+    for mid in digest_memory_ids:
+        if len(mid) >= 8 and mid[:8].isdigit():
             from datetime import date as _date
 
-            y, m, d = int(eid[:4]), int(eid[4:6]), int(eid[6:8])
-            slug = eid[9:] if len(eid) > 9 else eid
-            path = store._event_path(_date(y, m, d), slug)
+            y, m, d = int(mid[:4]), int(mid[4:6]), int(mid[6:8])
+            slug = mid[9:] if len(mid) > 9 else mid
+            path = store._memory_path(_date(y, m, d), slug)
             import contextlib
 
             with contextlib.suppress(FileNotFoundError):
-                events.append(store.read_event(path))
+                memories.append(store.read_memory(path))
 
-    features = extract_event_features(events)
+    features = extract_memory_features(memories)
     prefs = store.read_preferences()
     new_prefs = adjust_weights(prefs, sentiment, features)
     store.write_preferences(new_prefs)
 
-    first_eid = digest_event_ids[0] if digest_event_ids else "no events"
-    git.auto_commit("feedback", f"{sentiment.capitalize()} — {first_eid}")
+    first_mid = digest_memory_ids[0] if digest_memory_ids else "no memories"
+    git.auto_commit("feedback", f"{sentiment.capitalize()} — {first_mid}")
     logger.info("Feedback processed: %s (adjusted %d features)", sentiment, len(features))
     return sentiment

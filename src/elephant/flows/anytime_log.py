@@ -1,19 +1,24 @@
 """Anytime message handler: resolve intent, route to appropriate flow."""
 
+from __future__ import annotations
+
 import base64
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from elephant.brain.clarification import process_answer
 from elephant.brain.feedback import process_feedback
 from elephant.context_resolver import Intent, resolve_intent
-from elephant.data.store import DataStore
-from elephant.event_parser import parse_events_from_document
-from elephant.git_ops import GitRepo
-from elephant.llm.client import LLMClient
+from elephant.data.models import RawMessage, RawMessageAttachment
 from elephant.llm.prompts import describe_image
-from elephant.messaging.base import IncomingMessage, MessagingClient
+from elephant.memory_parser import parse_memories_from_document
 from elephant.tools.agent import ConversationalAgent
+
+if TYPE_CHECKING:
+    from elephant.data.store import DataStore
+    from elephant.git_ops import GitRepo
+    from elephant.llm.client import LLMClient
+    from elephant.messaging.base import IncomingMessage, MessagingClient
 
 logger = logging.getLogger(__name__)
 
@@ -28,17 +33,33 @@ class AnytimeLogFlow:
         parsing_model: str,
         messaging: MessagingClient,
         git: GitRepo,
+        history_limit: int = 500,
     ) -> None:
         self._store = store
         self._llm = llm
         self._parsing_model = parsing_model
         self._messaging = messaging
         self._git = git
-        self._agent = ConversationalAgent(store, llm, parsing_model, git)
+        self._agent = ConversationalAgent(
+            store, llm, parsing_model, git, history_limit=history_limit,
+        )
 
     async def handle_message(self, message: IncomingMessage) -> None:
         """Main entry point for all incoming messages."""
         logger.info("Received message from %s: %s", message.sender, message.text[:80])
+
+        raw = RawMessage(
+            text=message.text,
+            sender=message.sender,
+            message_id=message.message_id,
+            timestamp=message.timestamp,
+            reply_to_id=message.reply_to_id,
+            attachments=[
+                RawMessageAttachment(file_path=a.file_path, media_type=a.media_type)
+                for a in message.attachments
+            ],
+        )
+        self._store.append_raw_message(raw)
 
         await self._messaging.send_chat_action()
 
@@ -56,11 +77,11 @@ class AnytimeLogFlow:
         logger.info("Resolved intent: %s", intent.value)
 
         if intent == Intent.DIGEST_FEEDBACK:
-            await self._handle_digest_feedback(message, digest_state.last_digest_event_ids)
+            await self._handle_digest_feedback(message, digest_state.last_digest_memory_ids)
         elif intent == Intent.ANSWER_TO_QUESTION:
             await self._handle_answer(message, pending_questions)
         else:
-            # NEW_EVENT, CONTEXT_UPDATE, and anything else → conversational agent
+            # NEW_MEMORY, CONTEXT_UPDATE, and anything else → conversational agent
             await self._handle_with_agent(message)
 
     async def _handle_with_agent(self, message: IncomingMessage) -> None:
@@ -71,8 +92,7 @@ class AnytimeLogFlow:
         if message.attachments:
             doc_attachments = [a for a in message.attachments if a.media_type == "document"]
             if doc_attachments:
-                context = self._store.read_context()
-                await self._handle_document_events(message, doc_attachments, context, source)
+                await self._handle_document_memories(message, doc_attachments, source)
                 return
 
         text = message.text
@@ -81,11 +101,12 @@ class AnytimeLogFlow:
         if not text and message.attachments:
             photo_attachments = [a for a in message.attachments if a.media_type == "photo"]
             if photo_attachments:
-                context = self._store.read_context()
+                people = self._store.read_all_people()
+                prefs = self._store.read_preferences()
                 try:
                     with open(photo_attachments[0].file_path, "rb") as f:
                         image_b64 = base64.b64encode(f.read()).decode()
-                    messages = describe_image(image_b64, context)
+                    messages = describe_image(image_b64, people, prefs)
                     response = await self._llm.chat(
                         messages, model=self._parsing_model, temperature=0.5
                     )
@@ -98,19 +119,19 @@ class AnytimeLogFlow:
 
         response_text = await self._agent.handle(
             text, source, attachments=message.attachments or None,
+            message_id=message.message_id,
         )
         await self._messaging.send_text(response_text)
 
     _MAX_DOCUMENT_SIZE = 100_000  # ~100 KB limit for document content
 
-    async def _handle_document_events(
+    async def _handle_document_memories(
         self,
         message: IncomingMessage,
         doc_attachments: list[Any],
-        context: dict[str, Any],
         source: str,
     ) -> None:
-        """Read document files and parse batch events from their contents."""
+        """Read document files and parse batch memories from their contents."""
         # Read the first document attachment
         doc_path = doc_attachments[0].file_path
         try:
@@ -125,15 +146,19 @@ class AnytimeLogFlow:
             await self._messaging.send_text("The file appears to be empty.")
             return
 
-        caption = message.text or "Parse the events from this file."
+        caption = message.text or "Parse the memories from this file."
+
+        people = self._store.read_all_people()
+        prefs = self._store.read_preferences()
 
         try:
-            events = await parse_events_from_document(
+            memories = await parse_memories_from_document(
                 caption=caption,
                 document_content=content,
                 llm=self._llm,
                 model=self._parsing_model,
-                context=context,
+                people=people,
+                prefs=prefs,
                 source=source,
                 attachments=message.attachments or None,
             )
@@ -142,31 +167,33 @@ class AnytimeLogFlow:
             # Fall back to conversational agent
             response_text = await self._agent.handle(
                 caption, source, attachments=message.attachments or None,
+                message_id=message.message_id,
             )
             await self._messaging.send_text(response_text)
             return
 
-        if not events:
-            await self._messaging.send_text("I couldn't find any events in that file.")
+        if not memories:
+            await self._messaging.send_text("I couldn't find any memories in that file.")
             return
 
-        for event in events:
-            path = self._store.write_event(event)
-            self._git.auto_commit("event", event.title, timestamp=event.date, paths=[path])
+        for memory in memories:
+            memory.source_message_ids = [message.message_id]
+            path = self._store.write_memory(memory)
+            self._git.auto_commit("memory", memory.title, timestamp=memory.date, paths=[path])
 
-        titles = "\n".join(f"- {e.title} ({e.date})" for e in events[:10])
-        summary = f"Got it! Logged {len(events)} events from your file.\n\n{titles}"
-        if len(events) > 10:
-            summary += f"\n...and {len(events) - 10} more."
+        titles = "\n".join(f"- {m.title} ({m.date})" for m in memories[:10])
+        summary = f"Got it! Logged {len(memories)} memories from your file.\n\n{titles}"
+        if len(memories) > 10:
+            summary += f"\n...and {len(memories) - 10} more."
         await self._messaging.send_text(summary)
 
     async def _handle_digest_feedback(
-        self, message: IncomingMessage, event_ids: list[str]
+        self, message: IncomingMessage, memory_ids: list[str]
     ) -> None:
         """Process feedback on a digest."""
         sentiment = await process_feedback(
             message.text,
-            event_ids,
+            memory_ids,
             self._llm,
             self._parsing_model,
             self._store,

@@ -1,16 +1,20 @@
-"""Tests for event parser: mocked LLM -> Event."""
+"""Tests for memory parser: mocked LLM -> Memory."""
 
 from datetime import date
 from unittest.mock import AsyncMock
 
 import pytest
 
-from elephant.data.models import Event
-from elephant.event_parser import parse_event_from_text, parse_events_from_document
+from elephant.data.models import Memory, Person, PreferencesFile
 from elephant.llm.client import LLMResponse
+from elephant.memory_parser import (
+    ParseResult,
+    parse_memories_from_document,
+    parse_memory_from_text,
+)
 
 
-class TestParseEventFromText:
+class TestParseMemoryFromText:
     async def test_parses_valid_response(self):
         llm = AsyncMock()
         llm.chat = AsyncMock(
@@ -29,23 +33,29 @@ class TestParseEventFromText:
             )
         )
 
-        event = await parse_event_from_text(
+        people: list[Person] = []
+        prefs = PreferencesFile()
+        result = await parse_memory_from_text(
             "Lily took her first steps today!",
             llm,
             "test-model",
-            {},
-            event_date=date(2026, 2, 24),
+            people,
+            prefs,
+            memory_date=date(2026, 2, 24),
         )
 
-        assert isinstance(event, Event)
-        assert event.title == "Lily's first steps"
-        assert event.type == "milestone"
-        assert event.people == ["Lily", "Dad"]
-        assert event.location == "Portland, OR"
-        assert event.nostalgia_score == 1.5
-        assert "baby" in event.tags
-        assert event.date == date(2026, 2, 24)
-        assert event.id.startswith("20260224_")
+        assert isinstance(result, ParseResult)
+        memory = result.memory
+        assert isinstance(memory, Memory)
+        assert memory.title == "Lily's first steps"
+        assert memory.type == "milestone"
+        assert memory.people == ["Lily", "Dad"]
+        assert memory.location == "Portland, OR"
+        assert memory.nostalgia_score == 1.5
+        assert "baby" in memory.tags
+        assert memory.date == date(2026, 2, 24)
+        assert memory.id.startswith("20260224_")
+        assert result.confidence == 1.0  # default when not specified
 
     async def test_uses_defaults_for_missing_fields(self):
         llm = AsyncMock()
@@ -61,17 +71,20 @@ class TestParseEventFromText:
             )
         )
 
-        event = await parse_event_from_text(
+        people: list[Person] = []
+        prefs = PreferencesFile()
+        result = await parse_memory_from_text(
             "Something happened",
             llm,
             "test-model",
-            {},
-            event_date=date(2026, 2, 24),
+            people,
+            prefs,
+            memory_date=date(2026, 2, 24),
         )
 
-        assert event.title == "Quick note"
-        assert event.location is None
-        assert event.source == "WhatsApp"
+        assert result.memory.title == "Quick note"
+        assert result.memory.location is None
+        assert result.memory.source == "WhatsApp"
 
     async def test_invalid_llm_response_raises(self):
         llm = AsyncMock()
@@ -79,13 +92,16 @@ class TestParseEventFromText:
             return_value=LLMResponse(content="just a string", model="test", usage={})
         )
 
+        people: list[Person] = []
+        prefs = PreferencesFile()
         with pytest.raises(ValueError, match="non-dict"):
-            await parse_event_from_text(
+            await parse_memory_from_text(
                 "test",
                 llm,
                 "test-model",
-                {},
-                event_date=date(2026, 2, 24),
+                people,
+                prefs,
+                memory_date=date(2026, 2, 24),
             )
 
     async def test_integer_time_coerced_to_string(self):
@@ -101,15 +117,18 @@ class TestParseEventFromText:
             )
         )
 
-        event = await parse_event_from_text(
+        people: list[Person] = []
+        prefs = PreferencesFile()
+        result = await parse_memory_from_text(
             "Morning walk at 10:20",
             llm,
             "test-model",
-            {},
-            event_date=date(2026, 2, 25),
+            people,
+            prefs,
+            memory_date=date(2026, 2, 25),
         )
 
-        assert event.time == "1020"
+        assert result.memory.time == "1020"
 
     async def test_custom_source(self):
         llm = AsyncMock()
@@ -121,19 +140,22 @@ class TestParseEventFromText:
             )
         )
 
-        event = await parse_event_from_text(
+        people: list[Person] = []
+        prefs = PreferencesFile()
+        result = await parse_memory_from_text(
             "Went to park",
             llm,
             "test-model",
-            {},
+            people,
+            prefs,
             source="Telegram",
-            event_date=date(2026, 2, 24),
+            memory_date=date(2026, 2, 24),
         )
 
-        assert event.source == "Telegram"
+        assert result.memory.source == "Telegram"
 
 
-class TestParseEventsFromDocument:
+class TestParseMemoriesFromDocument:
     async def test_parses_yaml_list(self):
         llm = AsyncMock()
         llm.chat = AsyncMock(
@@ -161,30 +183,33 @@ class TestParseEventsFromDocument:
             )
         )
 
-        events = await parse_events_from_document(
+        people: list[Person] = []
+        prefs = PreferencesFile()
+        memories = await parse_memories_from_document(
             caption="These are birthdays",
             document_content='[{"name":"Mom","due":"2026-03-15"},{"name":"Dad","due":"2026-07-20"}]',
             llm=llm,
             model="test-model",
-            context={},
+            people=people,
+            prefs=prefs,
         )
 
-        assert len(events) == 2
-        assert all(isinstance(e, Event) for e in events)
-        assert events[0].title == "Mom's birthday"
-        assert events[0].date == date(2026, 3, 15)
-        assert events[1].title == "Dad's birthday"
-        assert events[1].date == date(2026, 7, 20)
+        assert len(memories) == 2
+        assert all(isinstance(m, Memory) for m in memories)
+        assert memories[0].title == "Mom's birthday"
+        assert memories[0].date == date(2026, 3, 15)
+        assert memories[1].title == "Dad's birthday"
+        assert memories[1].date == date(2026, 7, 20)
 
     async def test_single_dict_wrapped_as_list(self):
         llm = AsyncMock()
         llm.chat = AsyncMock(
             return_value=LLMResponse(
                 content=(
-                    "title: Solo event\n"
+                    "title: Solo memory\n"
                     "type: daily\n"
                     "date: 2026-01-01\n"
-                    "description: A single event\n"
+                    "description: A single memory\n"
                     "people: []\n"
                     "location: null\n"
                     "nostalgia_score: 1.0\n"
@@ -195,16 +220,19 @@ class TestParseEventsFromDocument:
             )
         )
 
-        events = await parse_events_from_document(
-            caption="One event",
+        people: list[Person] = []
+        prefs = PreferencesFile()
+        memories = await parse_memories_from_document(
+            caption="One memory",
             document_content="some content",
             llm=llm,
             model="test-model",
-            context={},
+            people=people,
+            prefs=prefs,
         )
 
-        assert len(events) == 1
-        assert events[0].title == "Solo event"
+        assert len(memories) == 1
+        assert memories[0].title == "Solo memory"
 
     async def test_empty_list_returns_empty(self):
         llm = AsyncMock()
@@ -212,15 +240,18 @@ class TestParseEventsFromDocument:
             return_value=LLMResponse(content="[]", model="test", usage={})
         )
 
-        events = await parse_events_from_document(
+        people: list[Person] = []
+        prefs = PreferencesFile()
+        memories = await parse_memories_from_document(
             caption="Empty file",
             document_content="",
             llm=llm,
             model="test-model",
-            context={},
+            people=people,
+            prefs=prefs,
         )
 
-        assert events == []
+        assert memories == []
 
     async def test_integer_time_coerced_to_string(self):
         llm = AsyncMock()
@@ -241,16 +272,19 @@ class TestParseEventsFromDocument:
             )
         )
 
-        events = await parse_events_from_document(
-            caption="Events",
+        people: list[Person] = []
+        prefs = PreferencesFile()
+        memories = await parse_memories_from_document(
+            caption="Memories",
             document_content="some data",
             llm=llm,
             model="test-model",
-            context={},
+            people=people,
+            prefs=prefs,
         )
 
-        assert len(events) == 1
-        assert events[0].time == "1230"
+        assert len(memories) == 1
+        assert memories[0].time == "1230"
 
     async def test_invalid_response_raises(self):
         llm = AsyncMock()
@@ -258,11 +292,14 @@ class TestParseEventsFromDocument:
             return_value=LLMResponse(content="just a string", model="test", usage={})
         )
 
+        people: list[Person] = []
+        prefs = PreferencesFile()
         with pytest.raises(ValueError, match="unexpected type"):
-            await parse_events_from_document(
+            await parse_memories_from_document(
                 caption="test",
                 document_content="test",
                 llm=llm,
                 model="test-model",
-                context={},
+                people=people,
+                prefs=prefs,
             )

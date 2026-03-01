@@ -40,7 +40,7 @@ class TestResolveIntent:
             questions=[
                 PendingQuestion(
                     id="q_001",
-                    type="event_enrichment",
+                    type="memory_enrichment",
                     subject="20260224_park",
                     status="asked",
                     created_at=datetime.now(UTC),
@@ -60,7 +60,7 @@ class TestResolveIntent:
             questions=[
                 PendingQuestion(
                     id="q_001",
-                    type="event_enrichment",
+                    type="memory_enrichment",
                     subject="20260224_park",
                     status="asked",
                     created_at=datetime.now(UTC),
@@ -70,7 +70,7 @@ class TestResolveIntent:
         )
 
         intent = await resolve_intent(msg, digest, pq, llm=None)
-        assert intent == Intent.NEW_EVENT
+        assert intent == Intent.NEW_MEMORY
 
     async def test_within_digest_window(self):
         now = datetime.now(UTC)
@@ -83,7 +83,7 @@ class TestResolveIntent:
         intent = await resolve_intent(msg, digest, pq)
         assert intent == Intent.DIGEST_FEEDBACK
 
-    async def test_outside_digest_window_defaults_to_new_event(self):
+    async def test_outside_digest_window_defaults_to_new_memory(self):
         now = datetime.now(UTC)
         msg = _make_message(text="Lily walked today!", timestamp=now)
         digest = DigestState(
@@ -91,17 +91,17 @@ class TestResolveIntent:
         )
         pq = PendingQuestionsFile()
 
-        # Without LLM, default is NEW_EVENT
+        # Without LLM, default is NEW_MEMORY
         intent = await resolve_intent(msg, digest, pq, llm=None)
-        assert intent == Intent.NEW_EVENT
+        assert intent == Intent.NEW_MEMORY
 
-    async def test_no_digest_state_defaults_to_new_event(self):
+    async def test_no_digest_state_defaults_to_new_memory(self):
         msg = _make_message(text="We went to the park")
         digest = DigestState()
         pq = PendingQuestionsFile()
 
         intent = await resolve_intent(msg, digest, pq, llm=None)
-        assert intent == Intent.NEW_EVENT
+        assert intent == Intent.NEW_MEMORY
 
     async def test_llm_classifies_context_update(self):
         from unittest.mock import AsyncMock

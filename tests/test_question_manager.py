@@ -19,7 +19,7 @@ class TestQuestionManager:
             questions=[
                 PendingQuestion(
                     id="q_001",
-                    type="event_enrichment",
+                    type="memory_enrichment",
                     subject="20260224_park",
                     question="Who was at the park?",
                     status="pending",
@@ -54,7 +54,7 @@ class TestQuestionManager:
             questions=[
                 PendingQuestion(
                     id="q_002",
-                    type="event_enrichment",
+                    type="memory_enrichment",
                     subject="20260224_park",
                     question=None,  # No text yet
                     status="pending",
@@ -87,7 +87,7 @@ class TestQuestionManager:
             questions=[
                 PendingQuestion(
                     id="q_003",
-                    type="event_enrichment",
+                    type="memory_enrichment",
                     subject="test",
                     question="Already asked?",
                     status="asked",
@@ -114,7 +114,7 @@ class TestQuestionManager:
             questions=[
                 PendingQuestion(
                     id="q_004",
-                    type="event_enrichment",
+                    type="memory_enrichment",
                     subject="test",
                     question="Test question?",
                     status="pending",

@@ -136,6 +136,7 @@ async def run(
             parsing_model=config.llm.parsing_model,
             messaging=messaging,
             git=git,
+            history_limit=db_cfg.chat_history_limit,
         )
         morning = MorningDigestFlow(
             store=store,

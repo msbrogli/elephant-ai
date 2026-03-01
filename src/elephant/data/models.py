@@ -1,6 +1,9 @@
 """Pydantic models for all YAML document types."""
 
+from __future__ import annotations
+
 from datetime import date, datetime
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -22,10 +25,40 @@ class CameraInfo(BaseModel):
     model: str = ""
 
 
-# --- Event ---
+# --- Memory sub-models ---
 
 
-class Event(BaseModel):
+class MemoryMetadata(BaseModel):
+    who: list[str] = Field(default_factory=list)
+    what: str | None = None
+    where: str | None = None
+    when: str | None = None
+    why: str | None = None
+    how: str | None = None
+
+
+class InteractionRecord(BaseModel):
+    initial_log: str | None = None
+    follow_up_q: str | None = None
+    user_answer: str | None = None
+    sentiment: str | None = None
+
+
+# --- Correction sub-model ---
+
+
+class Correction(BaseModel):
+    timestamp: datetime
+    field: str
+    old_value: str | None
+    new_value: str | None
+    reason: str | None = None
+
+
+# --- Memory (formerly Event) ---
+
+
+class Memory(BaseModel):
     id: str
     date: date
     time: str | None = None
@@ -36,8 +69,23 @@ class Event(BaseModel):
     location: str | None = None
     media: MediaLinks | None = None
     source: str  # WhatsApp, Telegram, evening_checkin, morning_digest, manual, photo_ingest
+    source_message_ids: list[str] = Field(default_factory=list)
     nostalgia_score: float = 1.0
     tags: list[str] = Field(default_factory=list)
+    content: str | None = None
+    participants: list[str] = Field(default_factory=list)
+    metadata: MemoryMetadata | None = None
+    interaction: InteractionRecord | None = None
+    media_refs: list[str] = Field(default_factory=list)
+    corrections: list[Correction] = Field(default_factory=list)
+
+    def resolved_value(self, field_name: str) -> Any:
+        """Return the latest corrected value for a field, or the original."""
+        for correction in reversed(self.corrections):
+            if correction.field == field_name:
+                return correction.new_value
+        return getattr(self, field_name, None)
+
 
 
 # --- Photo Index ---
@@ -52,7 +100,7 @@ class PhotoEntry(BaseModel):
     place: str | None = None
     people_detected: list[str] = Field(default_factory=list)
     camera: CameraInfo | None = None
-    event_id: str | None = None
+    memory_id: str | None = None
 
 
 # --- Video Index ---
@@ -69,7 +117,7 @@ class VideoEntry(BaseModel):
     people_detected: list[str] = Field(default_factory=list)
     camera: CameraInfo | None = None
     thumbnail: str | None = None
-    event_id: str | None = None
+    memory_id: str | None = None
 
 
 # --- People ---
@@ -85,17 +133,37 @@ class LifeEvent(BaseModel):
     description: str  # e.g. "got engaged", "wedding", "moved to Austin"
 
 
+class CurrentThread(BaseModel):
+    topic: str
+    latest_update: str
+    last_mentioned_date: date
+
+
+class PersonConnection(BaseModel):
+    person_id: str
+    type: str  # "sibling", "spouse", "coworker"
+    note: str | None = None
+
+
+class PersonPreferences(BaseModel):
+    remind_birthday_weeks_ahead: int = 2
+    tone_preference: str | None = None
+
+
 class Person(BaseModel):
     person_id: str
     display_name: str
     relationship: str
     birthday: date | None = None
     close_friend: bool = False
-    last_contact: date | None = None
     relationships: list[PersonRelationship] = Field(default_factory=list)
     life_events: list[LifeEvent] = Field(default_factory=list)
     face_clusters: list[str] = Field(default_factory=list)
     notes: str | None = None
+    current_threads: list[CurrentThread] = Field(default_factory=list)
+    archived_threads: list[CurrentThread] = Field(default_factory=list)
+    interaction_frequency_target: int | None = None
+    preferences: PersonPreferences | None = None
 
 
 # --- Preferences ---
@@ -116,6 +184,8 @@ class TonePreference(BaseModel):
 class PreferencesFile(BaseModel):
     nostalgia_weights: NostalgiaWeights = NostalgiaWeights()
     tone_preference: TonePreference = TonePreference()
+    locations: dict[str, str] = Field(default_factory=dict)
+    notes: list[str] = Field(default_factory=list)
 
 
 # --- Pending Questions ---
@@ -123,7 +193,7 @@ class PreferencesFile(BaseModel):
 
 class PendingQuestion(BaseModel):
     id: str
-    type: str  # person_identification, event_enrichment, context_gap, media_linking
+    type: str  # person_identification, memory_enrichment, context_gap, media_linking
     subject: str
     question: str | None = None
     status: str = "pending"  # pending, asked, answered, dismissed
@@ -142,9 +212,8 @@ class PendingQuestionsFile(BaseModel):
 
 class DigestState(BaseModel):
     last_digest_sent_at: datetime | None = None
-    last_digest_event_ids: list[str] = Field(default_factory=list)
+    last_digest_memory_ids: list[str] = Field(default_factory=list)
     last_digest_message_id: str | None = None
-    authorized_chat_id: str | None = None
 
 
 # --- Authorized Chats ---
@@ -159,3 +228,35 @@ class AuthorizedChat(BaseModel):
 
 class AuthorizedChatsFile(BaseModel):
     chats: list[AuthorizedChat] = Field(default_factory=list)
+
+
+# --- Chat History ---
+
+
+class ChatHistoryEntry(BaseModel):
+    role: str  # "user" or "assistant"
+    content: str
+    timestamp: datetime
+
+
+class ChatHistoryFile(BaseModel):
+    entries: list[ChatHistoryEntry] = Field(default_factory=list)
+
+
+# --- Raw Messages ---
+
+
+class RawMessageAttachment(BaseModel):
+    file_path: str
+    media_type: str  # "photo", "video", "document"
+
+
+class RawMessage(BaseModel):
+    text: str
+    sender: str
+    message_id: str
+    timestamp: datetime
+    reply_to_id: str | None = None
+    attachments: list[RawMessageAttachment] = Field(default_factory=list)
+
+

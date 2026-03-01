@@ -1,4 +1,4 @@
-"""Tests for brain context enrichment: context/people updates."""
+"""Tests for brain context enrichment: preferences/people updates."""
 
 from unittest.mock import AsyncMock, MagicMock
 
@@ -9,54 +9,6 @@ from elephant.llm.client import LLMResponse
 
 
 class TestProcessContextUpdate:
-    async def test_adds_family_member(self, data_dir):
-        store = DataStore(data_dir)
-        store.initialize()
-        git = MagicMock(spec=GitRepo)
-        git.auto_commit = MagicMock(return_value="abc123")
-
-        llm = AsyncMock()
-        llm.chat = AsyncMock(
-            return_value=LLMResponse(
-                content="family_member:\n  name: Lily\n  role: daughter\n  birthday: 2023-01-10",
-                model="m",
-                usage={},
-            )
-        )
-
-        result = await process_context_update(
-            "My daughter Lily was born on Jan 10 2023",
-            llm, "m", store, git,
-        )
-
-        assert result is True
-        ctx = store.read_context()
-        assert len(ctx["family"]["members"]) == 1
-        assert ctx["family"]["members"][0]["name"] == "Lily"
-        git.auto_commit.assert_called_once()
-
-    async def test_adds_friend(self, data_dir):
-        store = DataStore(data_dir)
-        store.initialize()
-        git = MagicMock(spec=GitRepo)
-        git.auto_commit = MagicMock(return_value="abc123")
-
-        llm = AsyncMock()
-        llm.chat = AsyncMock(
-            return_value=LLMResponse(
-                content="friend:\n  name: Rafael\n  relationship: college friend",
-                model="m",
-                usage={},
-            )
-        )
-
-        result = await process_context_update("Rafael is my college friend", llm, "m", store, git)
-
-        assert result is True
-        ctx = store.read_context()
-        assert len(ctx["friends"]) == 1
-        assert ctx["friends"][0]["name"] == "Rafael"
-
     async def test_adds_location(self, data_dir):
         store = DataStore(data_dir)
         store.initialize()
@@ -75,8 +27,9 @@ class TestProcessContextUpdate:
         result = await process_context_update("Grandma lives at 456 Oak St", llm, "m", store, git)
 
         assert result is True
-        ctx = store.read_context()
-        assert "Grandma's house" in ctx["locations"]
+        prefs = store.read_preferences()
+        assert "Grandma's house" in prefs.locations
+        assert prefs.locations["Grandma's house"] == "456 Oak St"
 
     async def test_adds_note(self, data_dir):
         store = DataStore(data_dir)
@@ -96,101 +49,9 @@ class TestProcessContextUpdate:
         result = await process_context_update("I love coffee", llm, "m", store, git)
 
         assert result is True
-        ctx = store.read_context()
-        assert len(ctx["notes"]) == 1
-        assert ctx["notes"][0]["text"] == "Dad loves coffee"
-        assert ctx["notes"][0]["date"]  # should have a date stamp
-
-    async def test_adds_multiple_family_members(self, data_dir):
-        store = DataStore(data_dir)
-        store.initialize()
-        git = MagicMock(spec=GitRepo)
-        git.auto_commit = MagicMock(return_value="abc123")
-
-        llm = AsyncMock()
-        llm.chat = AsyncMock(
-            return_value=LLMResponse(
-                content=(
-                    "family_members:\n"
-                    "  - name: Daniel\n"
-                    "    role: father\n"
-                    "  - name: Hannah\n"
-                    "    role: mother\n"
-                    "  - name: Oliver\n"
-                    "    role: son\n"
-                ),
-                model="m",
-                usage={},
-            )
-        )
-
-        result = await process_context_update(
-            "My name is Daniel, my wife Hannah, son Oliver",
-            llm, "m", store, git,
-        )
-
-        assert result is True
-        ctx = store.read_context()
-        names = [m["name"] for m in ctx["family"]["members"]]
-        assert names == ["Daniel", "Hannah", "Oliver"]
-        git.auto_commit.assert_called_once()
-
-    async def test_adds_family_member_list_singular_key(self, data_dir):
-        """LLM returns a list under the singular key 'family_member'."""
-        store = DataStore(data_dir)
-        store.initialize()
-        git = MagicMock(spec=GitRepo)
-        git.auto_commit = MagicMock(return_value="abc123")
-
-        llm = AsyncMock()
-        llm.chat = AsyncMock(
-            return_value=LLMResponse(
-                content=(
-                    "family_member:\n"
-                    "  - name: Alice\n"
-                    "    role: daughter\n"
-                    "  - name: Bob\n"
-                    "    role: son\n"
-                ),
-                model="m",
-                usage={},
-            )
-        )
-
-        result = await process_context_update("Alice and Bob are my kids", llm, "m", store, git)
-
-        assert result is True
-        ctx = store.read_context()
-        assert len(ctx["family"]["members"]) == 2
-
-    async def test_adds_multiple_friends(self, data_dir):
-        store = DataStore(data_dir)
-        store.initialize()
-        git = MagicMock(spec=GitRepo)
-        git.auto_commit = MagicMock(return_value="abc123")
-
-        llm = AsyncMock()
-        llm.chat = AsyncMock(
-            return_value=LLMResponse(
-                content=(
-                    "friends:\n"
-                    "  - name: Rafael\n"
-                    "    relationship: college friend\n"
-                    "  - name: Sarah\n"
-                    "    relationship: neighbor\n"
-                ),
-                model="m",
-                usage={},
-            )
-        )
-
-        result = await process_context_update("Rafael and Sarah are friends", llm, "m", store, git)
-
-        assert result is True
-        ctx = store.read_context()
-        assert len(ctx["friends"]) == 2
-        assert ctx["friends"][0]["name"] == "Rafael"
-        assert ctx["friends"][1]["name"] == "Sarah"
+        prefs = store.read_preferences()
+        assert len(prefs.notes) == 1
+        assert prefs.notes[0] == "Dad loves coffee"
 
     async def test_adds_multiple_notes(self, data_dir):
         store = DataStore(data_dir)
@@ -214,14 +75,42 @@ class TestProcessContextUpdate:
         result = await process_context_update("I love coffee, wife loves tea", llm, "m", store, git)
 
         assert result is True
-        ctx = store.read_context()
-        assert len(ctx["notes"]) == 2
-        assert ctx["notes"][0]["text"] == "Dad loves coffee"
-        assert ctx["notes"][1]["text"] == "Mom prefers tea"
-        assert all(n["date"] for n in ctx["notes"])
+        prefs = store.read_preferences()
+        assert len(prefs.notes) == 2
+        assert prefs.notes[0] == "Dad loves coffee"
+        assert prefs.notes[1] == "Mom prefers tea"
 
-    async def test_mixed_singular_and_plural(self, data_dir):
-        """LLM returns a mix of family members and a note in one response."""
+    async def test_updates_person(self, data_dir):
+        from elephant.data.models import Person
+
+        store = DataStore(data_dir)
+        store.initialize()
+
+        # Create an existing person
+        store.write_person(
+            Person(person_id="lily", display_name="Lily", relationship="daughter"),
+        )
+
+        git = MagicMock(spec=GitRepo)
+        git.auto_commit = MagicMock(return_value="abc123")
+
+        llm = AsyncMock()
+        llm.chat = AsyncMock(
+            return_value=LLMResponse(
+                content="person_update:\n  name: Lily\n  field: close_friend\n  value: true",
+                model="m",
+                usage={},
+            )
+        )
+
+        result = await process_context_update("Lily is my closest", llm, "m", store, git)
+
+        assert result is True
+        person = store.read_person("lily")
+        assert person is not None
+        assert person.close_friend is True
+
+    async def test_mixed_location_and_note(self, data_dir):
         store = DataStore(data_dir)
         store.initialize()
         git = MagicMock(spec=GitRepo)
@@ -231,9 +120,7 @@ class TestProcessContextUpdate:
         llm.chat = AsyncMock(
             return_value=LLMResponse(
                 content=(
-                    "family_members:\n"
-                    "  - name: Lily\n"
-                    "    role: daughter\n"
+                    "location:\n  name: Home\n  description: 123 Main St\n"
                     "note: Lily's favorite color is purple\n"
                 ),
                 model="m",
@@ -242,13 +129,13 @@ class TestProcessContextUpdate:
         )
 
         result = await process_context_update(
-            "Lily is my daughter, she loves purple", llm, "m", store, git
+            "We live at 123 Main, Lily loves purple", llm, "m", store, git
         )
 
         assert result is True
-        ctx = store.read_context()
-        assert len(ctx["family"]["members"]) == 1
-        assert ctx["notes"][0]["text"] == "Lily's favorite color is purple"
+        prefs = store.read_preferences()
+        assert "Home" in prefs.locations
+        assert prefs.notes[0] == "Lily's favorite color is purple"
 
     async def test_invalid_llm_response(self, data_dir):
         store = DataStore(data_dir)

@@ -1,50 +1,72 @@
-"""Generate follow-up questions for thin events and process answers."""
+"""Generate follow-up questions for thin memories and process answers."""
 
 import logging
 import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from elephant.data.models import Event, PendingQuestion
+from elephant.data.models import Memory, PendingQuestion, Person, PreferencesFile
 from elephant.data.store import DataStore
 from elephant.llm.client import LLMClient
-from elephant.llm.prompts import enrich_event, generate_clarification
+from elephant.llm.prompts import enrich_memory, generate_clarification
 
 logger = logging.getLogger(__name__)
 
-MAX_PENDING_QUESTIONS = 2
-THIN_EVENT_THRESHOLD = 50  # chars in description
+MAX_PENDING_QUESTIONS = 1
+THIN_MEMORY_THRESHOLD = 50  # chars in description
+
+CANONICAL_PERSON_FIELDS = {"birthday", "relationship", "display_name"}
 
 
-def is_thin_event(event: Event) -> bool:
-    """Check if an event is too thin and needs enrichment."""
-    short_desc = len(event.description) < THIN_EVENT_THRESHOLD
-    few_people = len(event.people) <= 1
-    no_location = event.location is None
+def detect_person_conflicts(person: Person, updates: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return conflicts where existing non-None value differs from new value."""
+    conflicts: list[dict[str, Any]] = []
+    for field in CANONICAL_PERSON_FIELDS:
+        if field not in updates:
+            continue
+        existing = getattr(person, field, None)
+        new_val = updates[field]
+        if existing is not None and str(existing) != str(new_val):
+            conflicts.append({
+                "field": field,
+                "existing_value": str(existing),
+                "new_value": str(new_val),
+            })
+    return conflicts
+
+
+def is_thin_memory(memory: Memory) -> bool:
+    """Check if a memory is too thin and needs enrichment."""
+    short_desc = len(memory.description) < THIN_MEMORY_THRESHOLD
+    few_people = len(memory.people) <= 1
+    no_location = memory.location is None
     return short_desc and (few_people or no_location)
 
 
-async def generate_question_for_event(
-    event: Event,
+
+
+async def generate_question_for_memory(
+    memory: Memory,
     llm: LLMClient,
     model: str,
-    context: dict[str, Any],
+    people: list[Person],
+    prefs: PreferencesFile,
     store: DataStore,
 ) -> PendingQuestion | None:
-    """Generate a follow-up question for a thin event, if under rate limit."""
+    """Generate a follow-up question for a thin memory, if under rate limit."""
     pq = store.read_pending_questions()
     pending_count = sum(1 for q in pq.questions if q.status in ("pending", "asked"))
     if pending_count >= MAX_PENDING_QUESTIONS:
         logger.debug("Rate limit: %d pending questions, skipping", pending_count)
         return None
 
-    messages = generate_clarification(event.title, event.description, context)
+    messages = generate_clarification(memory.title, memory.description, people, prefs)
     response = await llm.chat(messages, model=model, temperature=0.7)
 
     question = PendingQuestion(
         id=f"q_{uuid.uuid4().hex[:8]}",
-        type="event_enrichment",
-        subject=event.id,
+        type="memory_enrichment",
+        subject=memory.id,
         question=(response.content or "").strip(),
         status="pending",
         created_at=datetime.now(UTC),
@@ -52,8 +74,10 @@ async def generate_question_for_event(
 
     pq.questions.append(question)
     store.write_pending_questions(pq)
-    logger.info("Generated question %s for event %s", question.id, event.id)
+    logger.info("Generated question %s for memory %s", question.id, memory.id)
     return question
+
+
 
 
 async def process_answer(
@@ -75,42 +99,42 @@ async def process_answer(
         logger.warning("Question %s not found", question_id)
         return False
 
-    if question.type != "event_enrichment":
-        logger.info("Question %s is type %s, not event_enrichment", question_id, question.type)
+    if question.type != "memory_enrichment":
+        logger.info("Question %s is type %s, not memory_enrichment", question_id, question.type)
         question.status = "answered"
         question.answer = answer_text
         question.answered_at = datetime.now(UTC)
         store.write_pending_questions(pq)
         return True
 
-    # Find the event
-    event_id = question.subject
-    if len(event_id) >= 8 and event_id[:8].isdigit():
+    # Find the memory
+    memory_id = question.subject
+    if len(memory_id) >= 8 and memory_id[:8].isdigit():
         from datetime import date as _date
 
-        y, m, d = int(event_id[:4]), int(event_id[4:6]), int(event_id[6:8])
-        slug = event_id[9:] if len(event_id) > 9 else event_id
-        path = store._event_path(_date(y, m, d), slug)
+        y, m, d = int(memory_id[:4]), int(memory_id[4:6]), int(memory_id[6:8])
+        slug = memory_id[9:] if len(memory_id) > 9 else memory_id
+        path = store._memory_path(_date(y, m, d), slug)
         try:
-            event = store.read_event(path)
+            memory = store.read_memory(path)
         except FileNotFoundError:
-            logger.warning("Event %s not found for question %s", event_id, question_id)
+            logger.warning("Memory %s not found for question %s", memory_id, question_id)
             return False
 
-        # Enrich the event description via LLM
-        messages = enrich_event(
-            event.title,
-            event.description,
+        # Enrich the memory description via LLM
+        messages = enrich_memory(
+            memory.title,
+            memory.description,
             question.question or "",
             answer_text,
         )
         response = await llm.chat(messages, model=model, temperature=0.3)
         enriched_desc = (response.content or "").strip()
 
-        # Update event
-        updated = event.model_copy(update={"description": enriched_desc})
-        store.write_event(updated)
-        logger.info("Enriched event %s with answer to %s", event_id, question_id)
+        # Update memory
+        updated = memory.model_copy(update={"description": enriched_desc})
+        store.write_memory(updated)
+        logger.info("Enriched memory %s with answer to %s", memory_id, question_id)
 
     # Mark question as answered
     question.status = "answered"

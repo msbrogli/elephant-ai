@@ -1,11 +1,16 @@
 """Evening check-in flow: generate prompt, send."""
 
-import logging
+from __future__ import annotations
 
-from elephant.data.store import DataStore
-from elephant.llm.client import LLMClient
+import logging
+from typing import TYPE_CHECKING
+
 from elephant.llm.prompts import evening_checkin
-from elephant.messaging.base import MessagingClient
+
+if TYPE_CHECKING:
+    from elephant.data.store import DataStore
+    from elephant.llm.client import LLMClient
+    from elephant.messaging.base import MessagingClient
 
 logger = logging.getLogger(__name__)
 
@@ -27,8 +32,9 @@ class EveningCheckinFlow:
 
     async def run(self) -> bool:
         """Send an evening check-in message. Returns True if sent."""
-        context = self._store.read_context()
-        messages = evening_checkin(context)
+        people = self._store.read_all_people()
+        prefs = self._store.read_preferences()
+        messages = evening_checkin(people, prefs)
         response = await self._llm.chat(messages, model=self._model)
         checkin_text = (response.content or "").strip()
 

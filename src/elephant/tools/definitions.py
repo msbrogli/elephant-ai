@@ -8,9 +8,9 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
-            "name": "list_events",
+            "name": "list_memories",
             "description": (
-                "Search and list memory events. Use to answer questions about what happened, "
+                "Search and list memories. Use to answer questions about what happened, "
                 "find memories by date, person, or topic."
             ),
             "parameters": {
@@ -29,7 +29,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                         "items": {"type": "string"},
                         "description": "Filter by people involved",
                     },
-                    "event_type": {
+                    "memory_type": {
                         "type": "string",
                         "description": (
                             "Filter by type: milestone, daily, outing, celebration, "
@@ -57,41 +57,41 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
-            "name": "get_event",
-            "description": "Get full details of a specific event by its ID.",
+            "name": "get_memory",
+            "description": "Get full details of a specific memory by its ID.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "event_id": {
+                    "memory_id": {
                         "type": "string",
-                        "description": "The event ID (e.g. 20260224_park_day)",
+                        "description": "The memory ID (e.g. 20260224_park_day)",
                     },
                 },
-                "required": ["event_id"],
+                "required": ["memory_id"],
             },
         },
     },
     {
         "type": "function",
         "function": {
-            "name": "create_event",
+            "name": "create_memory",
             "description": (
-                "Create a new memory event. Use when the user describes something that happened."
+                "Create a new memory. Use when the user describes something that happened."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "title": {
                         "type": "string",
-                        "description": "Short title for the event",
+                        "description": "Short title for the memory",
                     },
                     "date": {
                         "type": "string",
-                        "description": "Event date (YYYY-MM-DD). Use today if not specified.",
+                        "description": "Memory date (YYYY-MM-DD). Use today if not specified.",
                     },
                     "time": {
                         "type": "string",
-                        "description": "Event time (HH:MM) or null",
+                        "description": "Memory time (HH:MM) or null",
                     },
                     "type": {
                         "type": "string",
@@ -99,7 +99,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                             "milestone", "daily", "outing", "celebration",
                             "health", "travel", "mundane", "other",
                         ],
-                        "description": "Event type",
+                        "description": "Memory type",
                     },
                     "description": {
                         "type": "string",
@@ -123,6 +123,29 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                         "items": {"type": "string"},
                         "description": "Relevant tags",
                     },
+                    "content": {
+                        "type": "string",
+                        "description": "Full narrative prose of the memory",
+                    },
+                    "participants": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "person_ids of people involved",
+                    },
+                    "confidence": {
+                        "type": "number",
+                        "description": (
+                            "Confidence score 0.0-1.0 for how sure you are about this memory. "
+                            "Low-confidence memories trigger clarification."
+                        ),
+                    },
+                    "auto_create_people": {
+                        "type": "boolean",
+                        "description": (
+                            "Set to true to auto-create Person files for unknown people. "
+                            "Only use after confirming with the user."
+                        ),
+                    },
                 },
                 "required": ["title", "date", "type", "description", "people"],
             },
@@ -131,14 +154,14 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
-            "name": "update_event",
-            "description": "Update fields on an existing event.",
+            "name": "update_memory",
+            "description": "Update fields on an existing memory.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "event_id": {
+                    "memory_id": {
                         "type": "string",
-                        "description": "The event ID to update",
+                        "description": "The memory ID to update",
                     },
                     "title": {"type": "string"},
                     "description": {"type": "string"},
@@ -151,96 +174,72 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                         "type": "array",
                         "items": {"type": "string"},
                     },
-                },
-                "required": ["event_id"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "delete_event",
-            "description": "Delete an event by ID.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "event_id": {
+                    "reason": {
                         "type": "string",
-                        "description": "The event ID to delete",
+                        "description": (
+                            "Reason for the update (required when updating past memories)"
+                        ),
                     },
                 },
-                "required": ["event_id"],
+                "required": ["memory_id"],
             },
         },
     },
     {
         "type": "function",
         "function": {
-            "name": "get_context",
-            "description": (
-                "Read family context: members, friends, locations, notes."
-            ),
+            "name": "delete_memory",
+            "description": "Delete a memory by ID.",
             "parameters": {
                 "type": "object",
-                "properties": {},
-                "required": [],
+                "properties": {
+                    "memory_id": {
+                        "type": "string",
+                        "description": "The memory ID to delete",
+                    },
+                },
+                "required": ["memory_id"],
             },
         },
     },
     {
         "type": "function",
         "function": {
-            "name": "update_context",
+            "name": "search_people",
             "description": (
-                "Update family context. Provide only the fields to add/update."
+                "Search for people by name (partial match). Returns matches with "
+                "relationship, current threads, and last contact. Use to disambiguate "
+                "when the user mentions a person by first name."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "family_members": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "name": {"type": "string"},
-                                "role": {"type": "string"},
-                                "birthday": {"type": "string"},
-                            },
-                            "required": ["name", "role"],
-                        },
-                        "description": "Family members to add/update",
-                    },
-                    "friends": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "name": {"type": "string"},
-                                "relationship": {"type": "string"},
-                            },
-                            "required": ["name"],
-                        },
-                        "description": "Friends to add/update",
-                    },
-                    "locations": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "name": {"type": "string"},
-                                "description": {"type": "string"},
-                            },
-                            "required": ["name"],
-                        },
-                        "description": "Locations to add/update",
-                    },
-                    "notes": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Free-text notes to add",
+                    "name": {
+                        "type": "string",
+                        "description": "Name to search for (case-insensitive partial match)",
                     },
                 },
-                "required": [],
+                "required": ["name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_person",
+            "description": (
+                "Get full person profile by person_id including threads, "
+                "connections, life events."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "person_id": {
+                        "type": "string",
+                        "description": "The person_id to look up",
+                    },
+                },
+                "required": ["person_id"],
             },
         },
     },
@@ -248,7 +247,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "list_people",
-            "description": "List all known people in the people directory.",
+            "description": "List all known people with summary info including current threads.",
             "parameters": {
                 "type": "object",
                 "properties": {},
@@ -262,7 +261,8 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "name": "update_person",
             "description": (
                 "Update a person's details: birthday, close_friend status, "
-                "relationship, notes, last_contact."
+                "relationship, notes, last_contact, current_threads, "
+                "interaction_frequency_target."
             ),
             "parameters": {
                 "type": "object",
@@ -278,13 +278,78 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                         "description": "Birthday in YYYY-MM-DD format",
                     },
                     "close_friend": {"type": "boolean"},
-                    "last_contact": {
-                        "type": "string",
-                        "description": "Last contact date in YYYY-MM-DD format",
-                    },
                     "notes": {"type": "string"},
+                    "current_threads": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "topic": {"type": "string"},
+                                "latest_update": {"type": "string"},
+                                "last_mentioned_date": {
+                                    "type": "string",
+                                    "description": "YYYY-MM-DD",
+                                },
+                            },
+                            "required": ["topic", "latest_update", "last_mentioned_date"],
+                        },
+                        "description": "Replace current threads with this list",
+                    },
+                    "interaction_frequency_target": {
+                        "type": "integer",
+                        "description": "Target days between contacts",
+                    },
+                    "archive_threads": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Topic names to move from current_threads to archived_threads."
+                        ),
+                    },
+                    "force": {
+                        "type": "boolean",
+                        "description": (
+                            "Set to true to force-update canonical fields "
+                            "(birthday, relationship, display_name) even if they differ."
+                        ),
+                    },
                 },
                 "required": ["person_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "update_locations",
+            "description": "Update known locations in preferences.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "locations": {
+                        "type": "object",
+                        "additionalProperties": {"type": "string"},
+                        "description": "Location name -> description mapping to add/update",
+                    },
+                },
+                "required": ["locations"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "add_note",
+            "description": "Add a freeform note to preferences.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "note": {
+                        "type": "string",
+                        "description": "The note to add",
+                    },
+                },
+                "required": ["note"],
             },
         },
     },

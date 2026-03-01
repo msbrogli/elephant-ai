@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from elephant.config import TelegramConfig
-from elephant.data.models import AuthorizedChat, AuthorizedChatsFile, DigestState
+from elephant.data.models import AuthorizedChat, AuthorizedChatsFile
 from elephant.messaging.base import current_chat_id
 from elephant.messaging.telegram import TelegramClient
 
@@ -19,12 +19,11 @@ def _mock_response(status, body):
     return resp
 
 
-def _mock_store(authorized_chat_id="456"):
+def _mock_store(chat_id="456"):
     store = MagicMock()
-    store.read_digest_state.return_value = DigestState(authorized_chat_id=authorized_chat_id)
     chats = []
-    if authorized_chat_id:
-        chats.append(AuthorizedChat(chat_id=authorized_chat_id, status="approved"))
+    if chat_id:
+        chats.append(AuthorizedChat(chat_id=chat_id, status="approved"))
     store.read_authorized_chats.return_value = AuthorizedChatsFile(chats=chats)
     return store
 
@@ -90,7 +89,7 @@ class TestTelegramClient:
 
     async def test_send_text_no_authorized_chat(self, telegram_config):
         session = AsyncMock()
-        client = TelegramClient(session, telegram_config, _mock_store(authorized_chat_id=None))
+        client = TelegramClient(session, telegram_config, _mock_store(chat_id=None))
 
         result = await client.send_text("Hello!")
         assert result.success is False
@@ -98,7 +97,7 @@ class TestTelegramClient:
 
     async def test_send_text_with_media_no_authorized_chat(self, telegram_config):
         session = AsyncMock()
-        client = TelegramClient(session, telegram_config, _mock_store(authorized_chat_id=None))
+        client = TelegramClient(session, telegram_config, _mock_store(chat_id=None))
 
         result = await client.send_text_with_media("Look!", "https://example.com/photo.jpg")
         assert result.success is False

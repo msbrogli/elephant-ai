@@ -6,8 +6,10 @@ import pytest
 from pydantic import ValidationError
 
 from elephant.data.models import (
-    Event,
+    CurrentThread,
     LifeEvent,
+    Memory,
+    MemoryMetadata,
     PendingQuestion,
     PendingQuestionsFile,
     Person,
@@ -18,9 +20,9 @@ from elephant.data.models import (
 )
 
 
-class TestEvent:
-    def test_minimal_event(self):
-        e = Event(
+class TestMemory:
+    def test_minimal_memory(self):
+        m = Memory(
             id="20260224_first_steps",
             date=date(2026, 2, 24),
             title="Lily's first steps",
@@ -29,11 +31,16 @@ class TestEvent:
             people=["Lily", "Dad"],
             source="WhatsApp",
         )
-        assert e.nostalgia_score == 1.0
-        assert e.tags == []
+        assert m.nostalgia_score == 1.0
+        assert m.tags == []
+        assert m.content is None
+        assert m.participants == []
+        assert m.metadata is None
+        assert m.interaction is None
+        assert m.media_refs == []
 
-    def test_full_event(self):
-        e = Event(
+    def test_full_memory(self):
+        m = Memory(
             id="20260224_first_steps",
             date=date(2026, 2, 24),
             time="14:15",
@@ -46,13 +53,20 @@ class TestEvent:
             source="WhatsApp",
             nostalgia_score=1.5,
             tags=["baby", "milestone"],
+            content="A beautiful moment when Lily walked for the first time.",
+            participants=["daughter", "dad"],
+            metadata=MemoryMetadata(who=["Lily", "Dad"], what="first steps"),
         )
-        assert e.media is not None
-        assert e.media.photos == ["2026/02/IMG_4455.JPG"]
+        assert m.media is not None
+        assert m.media.photos == ["2026/02/IMG_4455.JPG"]
+        assert m.content is not None
+        assert m.participants == ["daughter", "dad"]
+        assert m.metadata is not None
+        assert m.metadata.who == ["Lily", "Dad"]
 
-    def test_event_missing_required(self):
+    def test_memory_missing_required(self):
         with pytest.raises(ValidationError):
-            Event(id="test", date=date(2026, 1, 1), title="t", type="daily")  # type: ignore[call-arg]
+            Memory(id="test", date=date(2026, 1, 1), title="t", type="daily")  # type: ignore[call-arg]
 
 
 class TestPhotoEntry:
@@ -66,7 +80,7 @@ class TestPhotoEntry:
             place="Portland, OR",
             people_detected=["daughter"],
             camera={"make": "Apple", "model": "iPhone 15 Pro"},
-            event_id="20260224_first_steps",
+            memory_id="20260224_first_steps",
         )
         assert p.gps is not None
         assert p.gps.lat == 33.15
@@ -101,20 +115,21 @@ class TestPeople:
     def test_person_defaults(self):
         p = Person(person_id="test", display_name="Test", relationship="friend")
         assert p.close_friend is False
-        assert p.last_contact is None
         assert p.relationships == []
         assert p.life_events == []
+        assert p.current_threads == []
+        assert p.archived_threads == []
+        assert p.interaction_frequency_target is None
+        assert p.preferences is None
 
-    def test_close_friend_and_last_contact(self):
+    def test_close_friend(self):
         p = Person(
             person_id="friend_theo",
             display_name="Theo",
             relationship="friend",
             close_friend=True,
-            last_contact=date(2026, 2, 20),
         )
         assert p.close_friend is True
-        assert p.last_contact == date(2026, 2, 20)
 
     def test_relationships(self):
         p = Person(
@@ -141,12 +156,30 @@ class TestPeople:
         assert len(p.life_events) == 2
         assert p.life_events[0].description == "got engaged"
 
+    def test_current_threads(self):
+        p = Person(
+            person_id="friend_theo",
+            display_name="Theo",
+            relationship="friend",
+            current_threads=[
+                CurrentThread(
+                    topic="Job search",
+                    latest_update="Applied to Google",
+                    last_mentioned_date=date(2026, 2, 20),
+                ),
+            ],
+        )
+        assert len(p.current_threads) == 1
+        assert p.current_threads[0].topic == "Job search"
+
 
 class TestPreferences:
     def test_defaults(self):
         pf = PreferencesFile()
         assert pf.nostalgia_weights.milestones == 1.0
         assert pf.tone_preference.style == "heartfelt"
+        assert pf.locations == {}
+        assert pf.notes == []
 
     def test_custom_values(self):
         pf = PreferencesFile(
@@ -155,6 +188,14 @@ class TestPreferences:
         )
         assert pf.nostalgia_weights.milestones == 1.5
         assert pf.tone_preference.style == "playful"
+
+    def test_locations_and_notes(self):
+        pf = PreferencesFile(
+            locations={"Home": "123 Main St"},
+            notes=["Dad loves coffee"],
+        )
+        assert pf.locations["Home"] == "123 Main St"
+        assert pf.notes[0] == "Dad loves coffee"
 
 
 class TestPendingQuestions:
@@ -173,7 +214,7 @@ class TestPendingQuestions:
             questions=[
                 PendingQuestion(
                     id="q_001",
-                    type="event_enrichment",
+                    type="memory_enrichment",
                     subject="20260224_first_steps",
                     question="Was she walking toward someone?",
                     status="asked",

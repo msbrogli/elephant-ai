@@ -15,7 +15,7 @@ from elephant.config import (
     TelegramConfig,
     TwilioConfig,
 )
-from elephant.data.models import Event
+from elephant.data.models import Memory
 from elephant.data.store import DataStore
 from elephant.llm.client import LLMResponse
 
@@ -93,13 +93,13 @@ def full_config():
 
 
 @pytest.fixture
-def store_with_events(data_dir):
-    """Create a DataStore with some sample events."""
+def store_with_memories(data_dir):
+    """Create a DataStore with some sample memories."""
     store = DataStore(data_dir)
     store.initialize()
 
-    events = [
-        Event(
+    memories = [
+        Memory(
             id="20250224_first_steps",
             date=date(2025, 2, 24),
             title="Lily's first steps",
@@ -110,7 +110,7 @@ def store_with_events(data_dir):
             source="WhatsApp",
             nostalgia_score=1.5,
         ),
-        Event(
+        Memory(
             id="20240224_park_day",
             date=date(2024, 2, 24),
             title="Park day",
@@ -121,10 +121,14 @@ def store_with_events(data_dir):
             nostalgia_score=0.8,
         ),
     ]
-    for event in events:
-        store.write_event(event)
+    for memory in memories:
+        store.write_memory(memory)
 
     return store
+
+
+# Backward-compat alias
+store_with_events = store_with_memories
 
 
 @pytest.fixture

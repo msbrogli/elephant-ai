@@ -25,9 +25,7 @@ def _mock_store(approved_chat_ids: list[str] | None = None):
     chats = [AuthorizedChat(chat_id=cid, status="approved") for cid in approved_chat_ids]
     store.read_authorized_chats.return_value = AuthorizedChatsFile(chats=chats)
     store.write_authorized_chats = MagicMock()
-    store.read_digest_state.return_value = DigestState(
-        authorized_chat_id=approved_chat_ids[0] if approved_chat_ids else None
-    )
+    store.read_digest_state.return_value = DigestState()
     store.write_digest_state = MagicMock()
     return store
 
@@ -195,7 +193,6 @@ class TestTelegramWebhook(AioHTTPTestCase):
             assert len(written_ac.chats) == 1
             assert written_ac.chats[0].chat_id == "789"
             assert written_ac.chats[0].status == "approved"
-            store.write_digest_state.assert_called_once()
 
     async def test_start_pending_requires_approval(self):
         """Second /start with existing approved chats creates pending entry."""

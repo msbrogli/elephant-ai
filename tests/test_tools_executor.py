@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from elephant.data.models import Event, Person
+from elephant.data.models import Memory, Person
 from elephant.data.store import DataStore
 from elephant.git_ops import GitRepo
 from elephant.llm.client import LLMResponse, ToolCall
@@ -23,17 +23,17 @@ def executor(data_dir):
     return ToolExecutor(store, git, llm, "test-model"), store, git, llm
 
 
-class TestListEvents:
+class TestListMemories:
     async def test_empty_store(self, executor):
         ex, store, git, llm = executor
-        tc = ToolCall(id="1", function_name="list_events", arguments="{}")
+        tc = ToolCall(id="1", function_name="list_memories", arguments="{}")
         result = json.loads(await ex.execute(tc))
         assert result["count"] == 0
-        assert result["events"] == []
+        assert result["memories"] == []
 
-    async def test_with_events(self, executor):
+    async def test_with_memories(self, executor):
         ex, store, git, llm = executor
-        event = Event(
+        memory = Memory(
             id="20260224_park_day",
             date=date(2026, 2, 24),
             title="Park day",
@@ -42,44 +42,44 @@ class TestListEvents:
             people=["Lily"],
             source="agent",
         )
-        store.write_event(event)
+        store.write_memory(memory)
 
-        tc = ToolCall(id="1", function_name="list_events", arguments="{}")
+        tc = ToolCall(id="1", function_name="list_memories", arguments="{}")
         result = json.loads(await ex.execute(tc))
         assert result["count"] == 1
-        assert result["events"][0]["title"] == "Park day"
+        assert result["memories"][0]["title"] == "Park day"
 
     async def test_filter_by_people(self, executor):
         ex, store, git, llm = executor
-        store.write_event(Event(
+        store.write_memory(Memory(
             id="20260224_park", date=date(2026, 2, 24), title="Park",
             type="daily", description="Park", people=["Lily"], source="agent",
         ))
-        store.write_event(Event(
+        store.write_memory(Memory(
             id="20260224_work", date=date(2026, 2, 24), title="Work",
             type="daily", description="Work", people=["Dad"], source="agent",
         ))
 
         tc = ToolCall(
-            id="1", function_name="list_events",
+            id="1", function_name="list_memories",
             arguments=json.dumps({"people": ["Lily"]}),
         )
         result = json.loads(await ex.execute(tc))
         assert result["count"] == 1
-        assert result["events"][0]["title"] == "Park"
+        assert result["memories"][0]["title"] == "Park"
 
 
-class TestGetEvent:
+class TestGetMemory:
     async def test_found(self, executor):
         ex, store, git, llm = executor
-        store.write_event(Event(
+        store.write_memory(Memory(
             id="20260224_park_day", date=date(2026, 2, 24), title="Park day",
             type="daily", description="Fun", people=["Lily"], source="agent",
         ))
 
         tc = ToolCall(
-            id="1", function_name="get_event",
-            arguments=json.dumps({"event_id": "20260224_park_day"}),
+            id="1", function_name="get_memory",
+            arguments=json.dumps({"memory_id": "20260224_park_day"}),
         )
         result = json.loads(await ex.execute(tc))
         assert result["title"] == "Park day"
@@ -87,18 +87,23 @@ class TestGetEvent:
     async def test_not_found(self, executor):
         ex, store, git, llm = executor
         tc = ToolCall(
-            id="1", function_name="get_event",
-            arguments=json.dumps({"event_id": "20260224_nope"}),
+            id="1", function_name="get_memory",
+            arguments=json.dumps({"memory_id": "20260224_nope"}),
         )
         result = json.loads(await ex.execute(tc))
         assert "error" in result
 
 
-class TestCreateEvent:
+class TestCreateMemory:
     async def test_creates_and_commits(self, executor):
         ex, store, git, llm = executor
+        # Pre-create person so disambiguation doesn't block
+        store.write_person(
+            Person(person_id="lily", display_name="Lily", relationship="daughter"),
+        )
+
         tc = ToolCall(
-            id="1", function_name="create_event",
+            id="1", function_name="create_memory",
             arguments=json.dumps({
                 "title": "Park day",
                 "date": "2026-02-24",
@@ -110,87 +115,192 @@ class TestCreateEvent:
         result = json.loads(await ex.execute(tc))
         assert "created" in result
         assert result["title"] == "Park day"
-        git.auto_commit.assert_called_once()
+        git.auto_commit.assert_called()
 
         # Verify stored
-        event = store.find_event_by_id(result["created"])
-        assert event is not None
-        assert event.title == "Park day"
+        memory = store.find_memory_by_id(result["created"])
+        assert memory is not None
+        assert memory.title == "Park day"
 
 
-class TestUpdateEvent:
-    async def test_updates_existing(self, executor):
+class TestUpdateMemory:
+    async def test_updates_same_day_memory(self, executor):
+        from datetime import date as _date
+
         ex, store, git, llm = executor
-        store.write_event(Event(
-            id="20260224_park_day", date=date(2026, 2, 24), title="Park day",
+        today = _date.today()
+        mem_id = f"{today.strftime('%Y%m%d')}_park_day"
+        store.write_memory(Memory(
+            id=mem_id, date=today, title="Park day",
             type="daily", description="Fun", people=["Lily"], source="agent",
         ))
 
         tc = ToolCall(
-            id="1", function_name="update_event",
+            id="1", function_name="update_memory",
             arguments=json.dumps({
-                "event_id": "20260224_park_day",
+                "memory_id": mem_id,
                 "description": "Had a great time at the park!",
             }),
         )
         result = json.loads(await ex.execute(tc))
-        assert result["updated"] == "20260224_park_day"
+        assert result["updated"] == mem_id
 
-        event = store.find_event_by_id("20260224_park_day")
-        assert event is not None
-        assert event.description == "Had a great time at the park!"
+        memory = store.find_memory_by_id(mem_id)
+        assert memory is not None
+        assert memory.description == "Had a great time at the park!"
 
-
-class TestDeleteEvent:
-    async def test_deletes_existing(self, executor):
+    async def test_corrects_past_memory(self, executor):
         ex, store, git, llm = executor
-        store.write_event(Event(
+        store.write_memory(Memory(
             id="20260224_park_day", date=date(2026, 2, 24), title="Park day",
             type="daily", description="Fun", people=["Lily"], source="agent",
         ))
 
         tc = ToolCall(
-            id="1", function_name="delete_event",
-            arguments=json.dumps({"event_id": "20260224_park_day"}),
+            id="1", function_name="update_memory",
+            arguments=json.dumps({
+                "memory_id": "20260224_park_day",
+                "description": "Had a great time at the park!",
+                "reason": "More detail recalled",
+            }),
+        )
+        result = json.loads(await ex.execute(tc))
+        assert result["corrected"] == "20260224_park_day"
+        assert "description" in result["fields"]
+
+        memory = store.find_memory_by_id("20260224_park_day")
+        assert memory is not None
+        # Original preserved
+        assert memory.description == "Fun"
+        # Correction appended
+        assert len(memory.corrections) == 1
+        assert memory.corrections[0].field == "description"
+        assert memory.corrections[0].new_value == "Had a great time at the park!"
+        assert memory.corrections[0].reason == "More detail recalled"
+        # resolved_value returns corrected value
+        assert memory.resolved_value("description") == "Had a great time at the park!"
+
+
+class TestDeleteMemory:
+    async def test_deletes_existing(self, executor):
+        ex, store, git, llm = executor
+        store.write_memory(Memory(
+            id="20260224_park_day", date=date(2026, 2, 24), title="Park day",
+            type="daily", description="Fun", people=["Lily"], source="agent",
+        ))
+
+        tc = ToolCall(
+            id="1", function_name="delete_memory",
+            arguments=json.dumps({"memory_id": "20260224_park_day"}),
         )
         result = json.loads(await ex.execute(tc))
         assert result["deleted"] == "20260224_park_day"
-        assert store.find_event_by_id("20260224_park_day") is None
+        assert store.find_memory_by_id("20260224_park_day") is None
 
     async def test_not_found(self, executor):
         ex, store, git, llm = executor
         tc = ToolCall(
-            id="1", function_name="delete_event",
-            arguments=json.dumps({"event_id": "20260224_nope"}),
+            id="1", function_name="delete_memory",
+            arguments=json.dumps({"memory_id": "20260224_nope"}),
         )
         result = json.loads(await ex.execute(tc))
         assert "error" in result
 
 
-class TestContextTools:
-    async def test_get_context(self, executor):
+class TestSearchPeople:
+    async def test_search_by_name(self, executor):
         ex, store, git, llm = executor
-        store.write_context({"notes": ["test"]})
+        store.write_person(
+            Person(person_id="lily", display_name="Lily", relationship="daughter"),
+        )
+        store.write_person(
+            Person(person_id="theo", display_name="Theo", relationship="friend"),
+        )
 
-        tc = ToolCall(id="1", function_name="get_context", arguments="{}")
+        tc = ToolCall(
+            id="1", function_name="search_people",
+            arguments=json.dumps({"name": "Lily"}),
+        )
         result = json.loads(await ex.execute(tc))
-        assert result["notes"] == ["test"]
+        assert len(result["people"]) == 1
+        assert result["people"][0]["display_name"] == "Lily"
 
-    async def test_update_context(self, executor):
+    async def test_partial_match(self, executor):
+        ex, store, git, llm = executor
+        store.write_person(
+            Person(person_id="lily", display_name="Lily", relationship="daughter"),
+        )
+
+        tc = ToolCall(
+            id="1", function_name="search_people",
+            arguments=json.dumps({"name": "li"}),
+        )
+        result = json.loads(await ex.execute(tc))
+        assert len(result["people"]) == 1
+
+    async def test_no_matches(self, executor):
         ex, store, git, llm = executor
         tc = ToolCall(
-            id="1", function_name="update_context",
-            arguments=json.dumps({
-                "family_members": [{"name": "Lily", "role": "daughter"}],
-                "notes": ["She loves dinosaurs"],
-            }),
+            id="1", function_name="search_people",
+            arguments=json.dumps({"name": "nobody"}),
+        )
+        result = json.loads(await ex.execute(tc))
+        assert result["people"] == []
+
+
+class TestGetPerson:
+    async def test_found(self, executor):
+        ex, store, git, llm = executor
+        store.write_person(
+            Person(person_id="lily", display_name="Lily", relationship="daughter"),
+        )
+
+        tc = ToolCall(
+            id="1", function_name="get_person",
+            arguments=json.dumps({"person_id": "lily"}),
+        )
+        result = json.loads(await ex.execute(tc))
+        assert result["display_name"] == "Lily"
+        assert result["relationship"] == "daughter"
+
+    async def test_not_found(self, executor):
+        ex, store, git, llm = executor
+        tc = ToolCall(
+            id="1", function_name="get_person",
+            arguments=json.dumps({"person_id": "nope"}),
+        )
+        result = json.loads(await ex.execute(tc))
+        assert "error" in result
+
+
+class TestUpdateLocations:
+    async def test_updates_locations(self, executor):
+        ex, store, git, llm = executor
+
+        tc = ToolCall(
+            id="1", function_name="update_locations",
+            arguments=json.dumps({"locations": {"Home": "123 Main St"}}),
         )
         result = json.loads(await ex.execute(tc))
         assert result["updated"] is True
 
-        ctx = store.read_context()
-        assert ctx["family"]["members"][0]["name"] == "Lily"
-        assert any("dinosaurs" in n["text"] for n in ctx["notes"])
+        prefs = store.read_preferences()
+        assert prefs.locations["Home"] == "123 Main St"
+
+
+class TestAddNote:
+    async def test_adds_note(self, executor):
+        ex, store, git, llm = executor
+
+        tc = ToolCall(
+            id="1", function_name="add_note",
+            arguments=json.dumps({"note": "Dad loves coffee"}),
+        )
+        result = json.loads(await ex.execute(tc))
+        assert result["updated"] is True
+
+        prefs = store.read_preferences()
+        assert "Dad loves coffee" in prefs.notes
 
 
 class TestListPeople:
@@ -211,7 +321,6 @@ class TestListPeople:
         assert len(result["people"]) == 1
         assert result["people"][0]["display_name"] == "Lily"
         assert result["people"][0]["close_friend"] is False
-        assert result["people"][0]["last_contact"] is None
 
 
 class TestUpdatePerson:
@@ -237,6 +346,33 @@ class TestUpdatePerson:
         assert person.close_friend is True
         assert person.birthday is not None
 
+    async def test_updates_current_threads(self, executor):
+        ex, store, git, llm = executor
+        store.write_person(
+            Person(person_id="theo", display_name="Theo", relationship="friend"),
+        )
+
+        tc = ToolCall(
+            id="1", function_name="update_person",
+            arguments=json.dumps({
+                "person_id": "theo",
+                "current_threads": [
+                    {
+                        "topic": "Job search",
+                        "latest_update": "Applied to Google",
+                        "last_mentioned_date": "2026-02-20",
+                    },
+                ],
+            }),
+        )
+        result = json.loads(await ex.execute(tc))
+        assert result["updated"] == "theo"
+
+        person = store.read_person("theo")
+        assert person is not None
+        assert len(person.current_threads) == 1
+        assert person.current_threads[0].topic == "Job search"
+
     async def test_not_found(self, executor):
         ex, store, git, llm = executor
         tc = ToolCall(
@@ -247,18 +383,121 @@ class TestUpdatePerson:
         assert "error" in result
 
 
-class TestLastContactAutoUpdate:
-    async def test_updates_last_contact_on_event_create(self, executor):
+class TestComputedLastContact:
+    async def test_last_contact_computed_from_memories(self, executor):
+        """last_contact is derived from memories, not stored on Person."""
         ex, store, git, llm = executor
         store.write_person(
             Person(person_id="lily", display_name="Lily", relationship="daughter"),
         )
 
         tc = ToolCall(
-            id="1", function_name="create_event",
+            id="1", function_name="create_memory",
             arguments=json.dumps({
                 "title": "Park day",
                 "date": "2026-02-24",
+                "type": "daily",
+                "description": "Park with Lily",
+                "people": ["Lily"],
+            }),
+        )
+        result = json.loads(await ex.execute(tc))
+        assert "created" in result
+
+        # Verify computed via store
+        last = store.get_latest_memory_date_for_person("Lily")
+        assert last is not None
+        assert str(last) == "2026-02-24"
+
+    async def test_list_people_includes_computed_last_contact(self, executor):
+        ex, store, git, llm = executor
+        store.write_person(
+            Person(person_id="lily", display_name="Lily", relationship="daughter"),
+        )
+        from elephant.data.models import Memory
+        store.write_memory(Memory(
+            id="20260224_park", date=date(2026, 2, 24), title="Park",
+            type="daily", description="Park", people=["Lily"], source="agent",
+        ))
+
+        tc = ToolCall(id="1", function_name="list_people", arguments="{}")
+        result = json.loads(await ex.execute(tc))
+        assert result["people"][0]["last_contact"] == "2026-02-24"
+
+
+class TestEntityDisambiguation:
+    async def test_unknown_people_returns_warning(self, executor):
+        """Unknown person without auto_create_people returns a warning."""
+        ex, store, git, llm = executor
+        tc = ToolCall(
+            id="1", function_name="create_memory",
+            arguments=json.dumps({
+                "title": "Dinner with Yan",
+                "date": "2026-03-01",
+                "type": "daily",
+                "description": "Had dinner with Yan",
+                "people": ["Yan"],
+            }),
+        )
+        result = json.loads(await ex.execute(tc))
+        assert result["warning"] == "unknown_people"
+        assert "Yan" in result["unknown_names"]
+
+    async def test_near_match_suggestions(self, executor):
+        """Unknown name similar to existing person returns suggestions."""
+        ex, store, git, llm = executor
+        store.write_person(
+            Person(person_id="lily", display_name="Lily", relationship="daughter"),
+        )
+        tc = ToolCall(
+            id="1", function_name="create_memory",
+            arguments=json.dumps({
+                "title": "Park day",
+                "date": "2026-03-01",
+                "type": "daily",
+                "description": "Park with Lil",
+                "people": ["Lil"],
+            }),
+        )
+        result = json.loads(await ex.execute(tc))
+        assert result["warning"] == "unknown_people"
+        assert "Lily" in result["suggestions"]["Lil"]
+
+
+class TestAutoCreatePerson:
+    async def test_auto_creates_person_on_memory(self, executor):
+        """New person mentioned in memory gets a Person file created when confirmed."""
+        ex, store, git, llm = executor
+        tc = ToolCall(
+            id="1", function_name="create_memory",
+            arguments=json.dumps({
+                "title": "Dinner with Yan",
+                "date": "2026-03-01",
+                "type": "daily",
+                "description": "Had dinner with Yan",
+                "people": ["Yan"],
+                "auto_create_people": True,
+            }),
+        )
+        await ex.execute(tc)
+
+        person = store.read_person("yan")
+        assert person is not None
+        assert person.display_name == "Yan"
+        assert person.relationship == "unknown"
+
+    async def test_no_duplicate_when_person_exists(self, executor):
+        """Existing person is not duplicated."""
+        ex, store, git, llm = executor
+        store.write_person(
+            Person(person_id="lily", display_name="Lily", relationship="daughter"),
+        )
+
+        tc = ToolCall(
+            id="1", function_name="create_memory",
+            arguments=json.dumps({
+                "title": "Park day",
+                "date": "2026-03-04",
                 "type": "daily",
                 "description": "Park",
                 "people": ["Lily"],
@@ -266,36 +505,53 @@ class TestLastContactAutoUpdate:
         )
         await ex.execute(tc)
 
-        person = store.read_person("lily")
-        assert person is not None
-        assert person.last_contact is not None
-        assert str(person.last_contact) == "2026-02-24"
+        people = store.read_all_people()
+        assert len(people) == 1
+        assert people[0].person_id == "lily"
 
-    async def test_does_not_backdate_last_contact(self, executor):
-        from datetime import date
+    async def test_auto_create_multiple_people(self, executor):
+        """Multiple new people in one memory all get created."""
         ex, store, git, llm = executor
-        store.write_person(
-            Person(
-                person_id="lily", display_name="Lily",
-                relationship="daughter", last_contact=date(2026, 2, 25),
-            ),
-        )
 
         tc = ToolCall(
-            id="1", function_name="create_event",
+            id="1", function_name="create_memory",
             arguments=json.dumps({
-                "title": "Old event",
-                "date": "2026-02-20",
-                "type": "daily",
-                "description": "Historical",
-                "people": ["Lily"],
+                "title": "Party",
+                "date": "2026-03-05",
+                "type": "celebration",
+                "description": "Birthday party",
+                "people": ["Ana", "Bruno"],
+                "auto_create_people": True,
             }),
         )
         await ex.execute(tc)
 
-        person = store.read_person("lily")
-        assert person is not None
-        assert str(person.last_contact) == "2026-02-25"  # Not backdated
+        ana = store.read_person("ana")
+        bruno = store.read_person("bruno")
+        assert ana is not None
+        assert bruno is not None
+
+    async def test_auto_create_commits_for_new_person(self, executor):
+        """Auto-created person triggers a git commit."""
+        ex, store, git, llm = executor
+
+        tc = ToolCall(
+            id="1", function_name="create_memory",
+            arguments=json.dumps({
+                "title": "Coffee with Marcos",
+                "date": "2026-03-06",
+                "type": "daily",
+                "description": "Coffee",
+                "people": ["Marcos"],
+                "auto_create_people": True,
+            }),
+        )
+        await ex.execute(tc)
+
+        # First call is for the memory, second for the auto-created person
+        assert git.auto_commit.call_count == 2
+        people_call = git.auto_commit.call_args_list[1]
+        assert people_call.args[0] == "people"
 
 
 class TestDescribeAttachment:

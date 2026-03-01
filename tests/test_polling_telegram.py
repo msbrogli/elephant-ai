@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from elephant.config import ScheduleConfig, TelegramConfig
-from elephant.data.models import AuthorizedChat, AuthorizedChatsFile
+from elephant.data.models import AuthorizedChat, AuthorizedChatsFile, DigestState
 from elephant.database import DatabaseInstance
 from elephant.polling.telegram import TelegramPoller
 from elephant.router import ChatRouter
@@ -29,11 +29,7 @@ def _make_db(
         chats = [AuthorizedChat(chat_id=cid, status="approved") for cid in approved_chat_ids]
         store.read_authorized_chats.return_value = AuthorizedChatsFile(chats=chats)
         store.write_authorized_chats = MagicMock()
-        state = MagicMock()
-        state.authorized_chat_id = approved_chat_ids[0] if approved_chat_ids else None
-        state.model_copy = MagicMock(return_value=state)
-        store.read_digest_state.return_value = state
-        store.write_digest_state = MagicMock()
+        store.read_digest_state.return_value = DigestState()
         store.media_dir.return_value = "/tmp/test_media"
     anytime = AsyncMock()
     return DatabaseInstance(
@@ -67,11 +63,7 @@ def mock_store():
         chats=[AuthorizedChat(chat_id="42", status="approved")]
     )
     store.write_authorized_chats = MagicMock()
-    state = MagicMock()
-    state.authorized_chat_id = "42"
-    state.model_copy = MagicMock(return_value=state)
-    store.read_digest_state.return_value = state
-    store.write_digest_state = MagicMock()
+    store.read_digest_state.return_value = DigestState()
     store.media_dir.return_value = "/tmp/test_media"
     return store
 
@@ -164,7 +156,6 @@ class TestStartAuth:
         assert written.chats[0].chat_id == "77"
         assert written.chats[0].status == "approved"
         poller._reply.assert_awaited_once_with("77", "Authenticated!")
-        mock_store.write_digest_state.assert_called_once()
         db.anytime.handle_message.assert_not_awaited()
 
     async def test_start_pending_requires_approval(self, poller, mock_store, db):

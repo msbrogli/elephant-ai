@@ -1,11 +1,16 @@
 """Periodic sender for pending questions."""
 
-import logging
+from __future__ import annotations
 
-from elephant.data.store import DataStore
-from elephant.llm.client import LLMClient
+import logging
+from typing import TYPE_CHECKING
+
 from elephant.llm.prompts import generate_question_text
-from elephant.messaging.base import MessagingClient
+
+if TYPE_CHECKING:
+    from elephant.data.store import DataStore
+    from elephant.llm.client import LLMClient
+    from elephant.messaging.base import MessagingClient
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +33,8 @@ class QuestionManager:
     async def process_pending(self) -> int:
         """Check for pending questions and send them. Returns count sent."""
         pq = self._store.read_pending_questions()
-        context = self._store.read_context()
+        people = self._store.read_all_people()
+        prefs = self._store.read_preferences()
         sent = 0
 
         for question in pq.questions:
@@ -39,7 +45,7 @@ class QuestionManager:
             if not question.question:
                 try:
                     messages = generate_question_text(
-                        question.type, question.subject, context
+                        question.type, question.subject, people, prefs,
                     )
                     response = await self._llm.chat(
                         messages, model=self._model, temperature=0.7

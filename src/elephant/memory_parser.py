@@ -1,31 +1,47 @@
-"""Parse free-text messages into Event models via LLM."""
+"""Parse free-text messages into Memory models via LLM."""
+
+from __future__ import annotations
 
 import logging
 import uuid
+from dataclasses import dataclass
 from datetime import date
-from typing import Any
+from typing import TYPE_CHECKING
 
 import yaml
 
-from elephant.data.models import Event, MediaLinks
-from elephant.llm.client import LLMClient
-from elephant.llm.prompts import parse_event, parse_events_batch
-from elephant.messaging.base import Attachment
+from elephant.data.models import MediaLinks, Memory, Person, PreferencesFile
+from elephant.llm.prompts import parse_memories_batch, parse_memory
+
+if TYPE_CHECKING:
+    from elephant.llm.client import LLMClient
+    from elephant.messaging.base import Attachment
 
 logger = logging.getLogger(__name__)
 
+CONFIDENCE_THRESHOLD = 0.6
 
-async def parse_event_from_text(
+
+@dataclass
+class ParseResult:
+    """Result of parsing a message into a memory, with a confidence score."""
+
+    memory: Memory
+    confidence: float
+
+
+async def parse_memory_from_text(
     text: str,
     llm: LLMClient,
     model: str,
-    context: dict[str, Any],
+    people: list[Person],
+    prefs: PreferencesFile,
     source: str = "WhatsApp",
-    event_date: date | None = None,
+    memory_date: date | None = None,
     attachments: list[Attachment] | None = None,
-) -> Event:
-    """Use LLM to parse free text into a structured Event."""
-    messages = parse_event(text, context)
+) -> ParseResult:
+    """Use LLM to parse free text into a structured Memory with confidence."""
+    messages = parse_memory(text, people, prefs)
     response = await llm.chat(messages, model=model, temperature=0.3)
 
     parsed = yaml.safe_load(response.content or "")
@@ -33,9 +49,9 @@ async def parse_event_from_text(
         msg = f"LLM returned non-dict: {type(parsed).__name__}"
         raise ValueError(msg)
 
-    today = event_date or date.today()
-    slug = _slugify(parsed.get("title", "event"))
-    event_id = f"{today.strftime('%Y%m%d')}_{slug}"
+    today = memory_date or date.today()
+    slug = _slugify(parsed.get("title", "memory"))
+    memory_id = f"{today.strftime('%Y%m%d')}_{slug}"
 
     # Build media from attachments
     media = None
@@ -46,9 +62,10 @@ async def parse_event_from_text(
             media = MediaLinks(photos=photos, videos=videos)
 
     raw_time = parsed.get("time")
+    confidence = float(parsed.get("confidence", 1.0))
 
-    return Event(
-        id=event_id,
+    memory = Memory(
+        id=memory_id,
         date=today,
         time=str(raw_time) if raw_time is not None else None,
         title=parsed.get("title", text[:50]),
@@ -61,19 +78,23 @@ async def parse_event_from_text(
         nostalgia_score=float(parsed.get("nostalgia_score", 1.0)),
         tags=parsed.get("tags", []),
     )
+    return ParseResult(memory=memory, confidence=confidence)
 
 
-async def parse_events_from_document(
+
+
+async def parse_memories_from_document(
     caption: str,
     document_content: str,
     llm: LLMClient,
     model: str,
-    context: dict[str, Any],
+    people: list[Person],
+    prefs: PreferencesFile,
     source: str = "Telegram",
     attachments: list[Attachment] | None = None,
-) -> list[Event]:
-    """Parse a document's contents into multiple Event objects via LLM."""
-    messages = parse_events_batch(caption, document_content, context)
+) -> list[Memory]:
+    """Parse a document's contents into multiple Memory objects via LLM."""
+    messages = parse_memories_batch(caption, document_content, people, prefs)
     response = await llm.chat(messages, model=model, temperature=0.3)
 
     parsed = yaml.safe_load(response.content or "")
@@ -86,7 +107,7 @@ async def parse_events_from_document(
         msg = f"LLM returned unexpected type: {type(parsed).__name__}"
         raise ValueError(msg)
 
-    # Build media from attachments (shared across all events from this doc)
+    # Build media from attachments (shared across all memories from this doc)
     media = None
     if attachments:
         photos = [a.file_path for a in attachments if a.media_type == "photo"]
@@ -94,32 +115,32 @@ async def parse_events_from_document(
         if photos or videos:
             media = MediaLinks(photos=photos, videos=videos)
 
-    events: list[Event] = []
+    memories: list[Memory] = []
     for item in parsed:
         if not isinstance(item, dict):
             logger.warning("Skipping non-dict item in batch parse: %s", type(item).__name__)
             continue
 
         # Parse date from the item, falling back to today
-        event_date = date.today()
+        memory_date = date.today()
         raw_date = item.get("date")
         if raw_date:
             if isinstance(raw_date, date):
-                event_date = raw_date
+                memory_date = raw_date
             elif isinstance(raw_date, str):
                 try:
-                    event_date = date.fromisoformat(raw_date)
+                    memory_date = date.fromisoformat(raw_date)
                 except ValueError:
                     logger.warning("Unparseable date '%s', using today", raw_date)
 
-        slug = _slugify(item.get("title", "event"))
-        event_id = f"{event_date.strftime('%Y%m%d')}_{slug}"
+        slug = _slugify(item.get("title", "memory"))
+        memory_id = f"{memory_date.strftime('%Y%m%d')}_{slug}"
 
         raw_time = item.get("time")
-        events.append(
-            Event(
-                id=event_id,
-                date=event_date,
+        memories.append(
+            Memory(
+                id=memory_id,
+                date=memory_date,
                 time=str(raw_time) if raw_time is not None else None,
                 title=item.get("title", "Untitled"),
                 type=item.get("type", "other"),
@@ -133,7 +154,9 @@ async def parse_events_from_document(
             )
         )
 
-    return events
+    return memories
+
+
 
 
 def _slugify(text: str) -> str:
@@ -142,5 +165,5 @@ def _slugify(text: str) -> str:
     slug = "".join(c if c.isalnum() or c == " " else "" for c in slug)
     slug = "_".join(slug.split())
     if not slug:
-        slug = f"event_{uuid.uuid4().hex[:6]}"
+        slug = f"memory_{uuid.uuid4().hex[:6]}"
     return slug[:40]

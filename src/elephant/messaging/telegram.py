@@ -37,7 +37,11 @@ class TelegramClient:
         chat_id = current_chat_id.get(None)
         if chat_id:
             return chat_id
-        return self._store.read_digest_state().authorized_chat_id
+        chats = self._store.read_authorized_chats()
+        for chat in chats.chats:
+            if chat.status == "approved":
+                return chat.chat_id
+        return None
 
     async def send_text(self, text: str) -> SendResult:
         """Send a text message."""

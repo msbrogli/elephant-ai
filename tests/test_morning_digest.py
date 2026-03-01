@@ -4,7 +4,7 @@ from datetime import UTC, date, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import elephant.flows.morning_digest as mod
-from elephant.data.models import Event, PendingQuestion, PendingQuestionsFile, Person
+from elephant.data.models import Memory, PendingQuestion, PendingQuestionsFile, Person
 from elephant.data.store import DataStore
 from elephant.flows.morning_digest import (
     MorningDigestFlow,
@@ -16,8 +16,8 @@ from elephant.messaging.base import SendResult
 
 
 class TestMorningDigestFlow:
-    async def test_sends_digest_with_events(self, store_with_events):
-        store = store_with_events
+    async def test_sends_digest_with_memories(self, store_with_memories):
+        store = store_with_memories
 
         llm = AsyncMock()
         llm.chat = AsyncMock(
@@ -50,10 +50,10 @@ class TestMorningDigestFlow:
         # Check digest state was updated
         state = store.read_digest_state()
         assert state.last_digest_message_id == "msg_digest_1"
-        assert len(state.last_digest_event_ids) > 0
+        assert len(state.last_digest_memory_ids) > 0
 
-    async def test_handles_send_failure(self, store_with_events):
-        store = store_with_events
+    async def test_handles_send_failure(self, store_with_memories):
+        store = store_with_memories
 
         llm = AsyncMock()
         llm.chat = AsyncMock(
@@ -79,7 +79,7 @@ class TestMorningDigestFlow:
 
 
 class TestMorningQuestionFallback:
-    """Tests for _send_question_fallback when there are no events for today."""
+    """Tests for _send_question_fallback when there are no memories for today."""
 
     async def test_sends_existing_pending_question(self, data_dir):
         """When a pending question exists, wrap it and send."""
@@ -90,7 +90,7 @@ class TestMorningQuestionFallback:
             questions=[
                 PendingQuestion(
                     id="q_existing",
-                    type="event_enrichment",
+                    type="memory_enrichment",
                     subject="20260220_park",
                     question="Who was at the park that day?",
                     status="pending",
@@ -131,13 +131,13 @@ class TestMorningQuestionFallback:
         state = store.read_digest_state()
         assert state.last_digest_message_id is None
 
-    async def test_finds_thin_event_and_generates_question(self, data_dir):
-        """When no pending questions but thin events exist, generate one."""
+    async def test_finds_thin_memory_and_generates_question(self, data_dir):
+        """When no pending questions but thin memories exist, generate one."""
         store = DataStore(data_dir)
         store.initialize()
 
-        # Create a thin event (short description, no location, few people)
-        thin_event = Event(
+        # Create a thin memory (short description, no location, few people)
+        thin_memory = Memory(
             id="20260220_something",
             date=date(2026, 2, 20),
             title="Something happened",
@@ -146,7 +146,7 @@ class TestMorningQuestionFallback:
             people=["Lily"],
             source="Telegram",
         )
-        store.write_event(thin_event)
+        store.write_memory(thin_memory)
 
         llm = AsyncMock()
         llm.chat = AsyncMock(
@@ -166,7 +166,7 @@ class TestMorningQuestionFallback:
 
         flow = MorningDigestFlow(store, llm, "test-model", messaging, git)
 
-        # Patch to a date with no events
+        # Patch to a date with no memories
         mock_now = datetime(2026, 3, 15, 7, 0, 0, tzinfo=UTC)
         with patch.object(mod, "datetime", wraps=datetime) as mock_dt:
             mock_dt.now = MagicMock(return_value=mock_now)
@@ -178,11 +178,11 @@ class TestMorningQuestionFallback:
         updated = store.read_pending_questions()
         assert len(updated.questions) == 1
         assert updated.questions[0].status == "asked"
-        assert updated.questions[0].type == "event_enrichment"
+        assert updated.questions[0].type == "memory_enrichment"
         assert updated.questions[0].message_id == "msg_q_2"
 
     async def test_context_gap_fallback(self, data_dir):
-        """When no pending questions and no thin events, generate a context_gap question."""
+        """When no pending questions and no thin memories, generate a context_gap question."""
         store = DataStore(data_dir)
         store.initialize()
 
@@ -354,7 +354,7 @@ class TestBirthdayReminders:
 
 
 class TestBirthdayDigestIntegration:
-    """Integration: digest includes birthday data when no events but birthdays exist."""
+    """Integration: digest includes birthday data when no memories but birthdays exist."""
 
     async def test_birthday_only_digest(self, data_dir):
         store = DataStore(data_dir)

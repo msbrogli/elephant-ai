@@ -68,9 +68,9 @@ class TestMainIntegration:
         task = await _start_app(integration_env, unused_tcp_port)
 
         data_dir = _data_dir_from_config(integration_env["config_path"])
-        assert os.path.isdir(os.path.join(data_dir, "events"))
+        assert os.path.isdir(os.path.join(data_dir, "memories"))
         assert os.path.isdir(os.path.join(data_dir, "photo_index"))
-        assert os.path.exists(os.path.join(data_dir, "events", "_schema.yaml"))
+        assert os.path.exists(os.path.join(data_dir, "memories", "_schema.yaml"))
         assert os.path.isdir(os.path.join(data_dir, "people"))
         assert os.path.exists(os.path.join(data_dir, "people", "_schema.yaml"))
 

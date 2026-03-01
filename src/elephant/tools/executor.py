@@ -10,7 +10,7 @@ from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from elephant.data.models import Event, MediaLinks
+from elephant.data.models import Correction, CurrentThread, MediaLinks, Memory, Person
 from elephant.llm.prompts import describe_image
 
 if TYPE_CHECKING:
@@ -27,7 +27,7 @@ def _slugify(text: str) -> str:
     slug = "".join(c if c.isalnum() or c == " " else "" for c in slug)
     slug = "_".join(slug.split())
     if not slug:
-        slug = f"event_{uuid.uuid4().hex[:6]}"
+        slug = f"memory_{uuid.uuid4().hex[:6]}"
     return slug[:40]
 
 
@@ -43,6 +43,11 @@ class ToolExecutor:
         self._git = git
         self._llm = llm
         self._model = model
+        self._current_message_id: str | None = None
+
+    def set_message_context(self, *, message_id: str | None = None) -> None:
+        """Set the current message context for source tracking."""
+        self._current_message_id = message_id
 
     async def execute(self, tool_call: ToolCall) -> str:
         """Execute a tool call and return the JSON result string."""
@@ -57,33 +62,33 @@ class ToolExecutor:
             logger.warning("Tool execution failed: %s", e, exc_info=True)
             return json.dumps({"error": str(e)})
 
-    async def _handle_list_events(self, args: dict[str, Any]) -> Any:
+    async def _handle_list_memories(self, args: dict[str, Any]) -> Any:
         date_from = _parse_date(args.get("date_from"))
         date_to = _parse_date(args.get("date_to"))
-        events = self._store.list_events(
+        memories = self._store.list_memories(
             date_from=date_from,
             date_to=date_to,
             people=args.get("people"),
-            event_type=args.get("event_type"),
+            memory_type=args.get("memory_type"),
             tags=args.get("tags"),
             query=args.get("query"),
             limit=args.get("limit", 20),
         )
         return {
-            "count": len(events),
-            "events": [_event_summary(e) for e in events],
+            "count": len(memories),
+            "memories": [_memory_summary(m) for m in memories],
         }
 
-    async def _handle_get_event(self, args: dict[str, Any]) -> Any:
-        event = self._store.find_event_by_id(args["event_id"])
-        if event is None:
-            return {"error": f"Event not found: {args['event_id']}"}
-        return event.model_dump(mode="json", exclude_none=True)
+    async def _handle_get_memory(self, args: dict[str, Any]) -> Any:
+        memory = self._store.find_memory_by_id(args["memory_id"])
+        if memory is None:
+            return {"error": f"Memory not found: {args['memory_id']}"}
+        return memory.model_dump(mode="json", exclude_none=True)
 
-    async def _handle_create_event(self, args: dict[str, Any]) -> Any:
-        event_date = _parse_date(args["date"]) or date.today()
+    async def _handle_create_memory(self, args: dict[str, Any]) -> Any:
+        memory_date = _parse_date(args["date"]) or date.today()
         slug = _slugify(args["title"])
-        event_id = f"{event_date.strftime('%Y%m%d')}_{slug}"
+        memory_id = f"{memory_date.strftime('%Y%m%d')}_{slug}"
 
         media = None
         media_data = args.get("media")
@@ -93,9 +98,26 @@ class ToolExecutor:
                 videos=media_data.get("videos", []),
             )
 
-        event = Event(
-            id=event_id,
-            date=event_date,
+        # Check confidence threshold
+        confidence = float(args.get("confidence", 1.0))
+        if confidence < 0.6:
+            return {
+                "needs_clarification": True,
+                "confidence": confidence,
+                "title": args.get("title", ""),
+                "message": (
+                    "I'm not very confident about this memory. "
+                    "Could you clarify what happened?"
+                ),
+            }
+
+        source_message_ids: list[str] = []
+        if self._current_message_id:
+            source_message_ids = [self._current_message_id]
+
+        memory = Memory(
+            id=memory_id,
+            date=memory_date,
             time=args.get("time"),
             title=args["title"],
             type=args.get("type", "other"),
@@ -104,96 +126,145 @@ class ToolExecutor:
             location=args.get("location"),
             media=media,
             source=args.get("source", "agent"),
+            source_message_ids=source_message_ids,
             nostalgia_score=float(args.get("nostalgia_score", 1.0)),
             tags=args.get("tags", []),
+            content=args.get("content"),
+            participants=args.get("participants", []),
         )
 
-        path = self._store.write_event(event)
-        self._git.auto_commit("event", event.title, timestamp=event.date, paths=[path])
+        # Check for unknown people before writing
+        auto_create = args.get("auto_create_people", False)
+        if not auto_create and memory.people:
+            _, unmatched = self._find_unmatched_people(memory.people)
+            if unmatched:
+                suggestions: dict[str, list[str]] = {}
+                for name in unmatched:
+                    near = self._find_near_matches(name)
+                    if near:
+                        suggestions[name] = near
+                return {
+                    "warning": "unknown_people",
+                    "unknown_names": unmatched,
+                    "suggestions": suggestions,
+                    "message": (
+                        f"I don't recognize: {', '.join(unmatched)}. "
+                        "Are these new people, or did you mean someone else? "
+                        "If new, ask the user for their full name (first + surname) "
+                        "before creating them."
+                    ),
+                }
 
-        # Auto-update last_contact for mentioned people
-        self._update_last_contact(event.people, event.date)
+        path = self._store.write_memory(memory)
+        self._git.auto_commit("memory", memory.title, timestamp=memory.date, paths=[path])
 
-        logger.info("Agent created event: %s", event_id)
-        return {"created": event_id, "title": event.title, "date": str(event.date)}
+        # Auto-create confirmed unknowns
+        if auto_create:
+            self._auto_create_people(memory.people, memory.date)
 
-    async def _handle_update_event(self, args: dict[str, Any]) -> Any:
-        event_id = args.pop("event_id")
-        # Only pass valid update fields
+        logger.info("Agent created memory: %s", memory_id)
+        return {"created": memory_id, "title": memory.title, "date": str(memory.date)}
+
+    async def _handle_update_memory(self, args: dict[str, Any]) -> Any:
+        from datetime import UTC
+        from datetime import datetime as _datetime
+
+        memory_id = args.pop("memory_id")
+        reason = args.pop("reason", None)
         allowed = {"title", "description", "people", "location", "tags", "time", "type",
-                    "nostalgia_score"}
+                    "nostalgia_score", "content", "participants"}
         updates = {k: v for k, v in args.items() if k in allowed}
-        event = self._store.update_event(event_id, updates)
-        if event is None:
-            return {"error": f"Event not found: {event_id}"}
-        path = self._store.write_event(event)
-        self._git.auto_commit("event", f"Updated {event.title}", timestamp=event.date, paths=[path])
-        return {"updated": event_id, "title": event.title}
 
-    async def _handle_delete_event(self, args: dict[str, Any]) -> Any:
-        event_id = args["event_id"]
-        deleted = self._store.delete_event(event_id)
+        memory = self._store.find_memory_by_id(memory_id)
+        if memory is None:
+            return {"error": f"Memory not found: {memory_id}"}
+
+        if memory.date < date.today():
+            # Past memory: append corrections instead of overwriting
+            corrections = list(memory.corrections)
+            for field, new_val in updates.items():
+                old_val = getattr(memory, field, None)
+                corrections.append(Correction(
+                    timestamp=_datetime.now(UTC),
+                    field=field,
+                    old_value=str(old_val) if old_val is not None else None,
+                    new_value=str(new_val) if new_val is not None else None,
+                    reason=reason,
+                ))
+            updated = memory.model_copy(update={"corrections": corrections})
+            path = self._store.write_memory(updated)
+            self._git.auto_commit(
+                "memory", f"Corrected {memory.title}", timestamp=memory.date, paths=[path],
+            )
+            return {"corrected": memory_id, "title": memory.title,
+                    "fields": list(updates.keys())}
+        else:
+            # Same-day: direct update
+            updated = memory.model_copy(update=updates)
+            path = self._store.write_memory(updated)
+            self._git.auto_commit(
+                "memory", f"Updated {memory.title}", timestamp=memory.date, paths=[path],
+            )
+            return {"updated": memory_id, "title": memory.title}
+
+    async def _handle_delete_memory(self, args: dict[str, Any]) -> Any:
+        memory_id = args["memory_id"]
+        deleted = self._store.delete_memory(memory_id)
         if not deleted:
-            return {"error": f"Event not found: {event_id}"}
-        self._git.auto_commit("event", f"Deleted {event_id}")
-        return {"deleted": event_id}
+            return {"error": f"Memory not found: {memory_id}"}
+        self._git.auto_commit("memory", f"Deleted {memory_id}")
+        return {"deleted": memory_id}
 
-    async def _handle_get_context(self, args: dict[str, Any]) -> Any:
-        return self._store.read_context()
+    async def _handle_search_people(self, args: dict[str, Any]) -> Any:
+        name_query = args.get("name", "").lower()
+        all_people = self._store.read_all_people()
+        matches = [
+            p for p in all_people
+            if name_query in p.display_name.lower() or name_query in p.person_id.lower()
+        ]
+        last_contacts = self._store.get_latest_memory_dates_for_people(
+            [p.display_name for p in matches],
+        )
+        return {
+            "count": len(matches),
+            "people": [
+                {
+                    "person_id": p.person_id,
+                    "display_name": p.display_name,
+                    "relationship": p.relationship,
+                    "last_contact": (
+                        str(last_contacts.get(p.display_name))
+                        if last_contacts.get(p.display_name) else None
+                    ),
+                    "current_threads": [
+                        {
+                            "topic": t.topic,
+                            "latest_update": t.latest_update,
+                            "last_mentioned_date": str(t.last_mentioned_date),
+                        }
+                        for t in p.current_threads
+                    ],
+                }
+                for p in matches
+            ],
+        }
 
-    async def _handle_update_context(self, args: dict[str, Any]) -> Any:
-        context = self._store.read_context()
-        changed = False
-
-        for member in args.get("family_members", []):
-            if isinstance(member, dict) and "name" in member:
-                family = context.setdefault("family", {})
-                members = family.setdefault("members", [])
-                # Update existing or append
-                found = False
-                for existing in members:
-                    if existing.get("name") == member["name"]:
-                        existing.update(member)
-                        found = True
-                        break
-                if not found:
-                    members.append(member)
-                changed = True
-
-        for friend in args.get("friends", []):
-            if isinstance(friend, dict) and "name" in friend:
-                friends = context.setdefault("friends", [])
-                found = False
-                for existing in friends:
-                    if existing.get("name") == friend["name"]:
-                        existing.update(friend)
-                        found = True
-                        break
-                if not found:
-                    friends.append(friend)
-                changed = True
-
-        for loc in args.get("locations", []):
-            if isinstance(loc, dict) and "name" in loc:
-                locations = context.setdefault("locations", {})
-                locations[loc["name"]] = loc.get("description", "")
-                changed = True
-
-        today = date.today().isoformat()
-        for note in args.get("notes", []):
-            if note:
-                notes = context.setdefault("notes", [])
-                notes.append({"text": str(note), "date": today})
-                changed = True
-
-        if changed:
-            self._store.write_context(context)
-            self._git.auto_commit("context", "Context update from agent")
-
-        return {"updated": changed}
+    async def _handle_get_person(self, args: dict[str, Any]) -> Any:
+        person_id = args.get("person_id", "")
+        person = self._store.read_person(person_id)
+        if person is None:
+            return {"error": f"Person not found: {person_id}"}
+        data = person.model_dump(mode="json", exclude_none=True)
+        last_contact = self._store.get_latest_memory_date_for_person(person.display_name)
+        if last_contact:
+            data["last_contact"] = str(last_contact)
+        return data
 
     async def _handle_list_people(self, args: dict[str, Any]) -> Any:
         people = self._store.read_all_people()
+        last_contacts = self._store.get_latest_memory_dates_for_people(
+            [p.display_name for p in people],
+        )
         return {
             "people": [
                 {
@@ -202,46 +273,145 @@ class ToolExecutor:
                     "relationship": p.relationship,
                     "birthday": str(p.birthday) if p.birthday else None,
                     "close_friend": p.close_friend,
-                    "last_contact": str(p.last_contact) if p.last_contact else None,
+                    "last_contact": (
+                        str(last_contacts.get(p.display_name))
+                        if last_contacts.get(p.display_name) else None
+                    ),
+                    "current_threads": [
+                        {"topic": t.topic, "latest_update": t.latest_update}
+                        for t in p.current_threads
+                    ],
                 }
                 for p in people
             ]
         }
 
     async def _handle_update_person(self, args: dict[str, Any]) -> Any:
+        from elephant.brain.clarification import detect_person_conflicts
+
         person_id = args.get("person_id", "")
+        force = args.pop("force", False)
         person = self._store.read_person(person_id)
         if person is None:
             return {"error": f"Person not found: {person_id}"}
         allowed = {
             "display_name", "relationship", "birthday", "close_friend",
-            "last_contact", "notes",
+            "notes", "interaction_frequency_target",
         }
-        updates = {k: v for k, v in args.items() if k in allowed}
+        updates: dict[str, Any] = {k: v for k, v in args.items() if k in allowed}
         if "birthday" in updates and isinstance(updates["birthday"], str):
             updates["birthday"] = _parse_date(updates["birthday"])
-        if "last_contact" in updates and isinstance(updates["last_contact"], str):
-            updates["last_contact"] = _parse_date(updates["last_contact"])
+
+        # Check for conflicts on canonical fields
+        if not force:
+            conflicts = detect_person_conflicts(person, updates)
+            if conflicts:
+                return {
+                    "conflict": True,
+                    "conflicts": conflicts,
+                    "message": (
+                        "These fields already have values that differ from the new ones. "
+                        "Ask the user which value is correct, then re-call with force: true."
+                    ),
+                }
+
+        # Handle current_threads
+        if "current_threads" in args:
+            threads_data = args["current_threads"]
+            threads = []
+            for t in threads_data:
+                if isinstance(t, dict):
+                    threads.append(CurrentThread(
+                        topic=t["topic"],
+                        latest_update=t["latest_update"],
+                        last_mentioned_date=_parse_date(t["last_mentioned_date"]) or date.today(),
+                    ))
+            updates["current_threads"] = threads
+
         updated = person.model_copy(update=updates)
+
+        # Handle archive_threads: move matching threads to archived_threads
+        archive_topics = args.get("archive_threads")
+        if archive_topics:
+            archive_set = {t.lower() for t in archive_topics}
+            remaining: list[CurrentThread] = []
+            newly_archived: list[CurrentThread] = list(updated.archived_threads)
+            for thread in updated.current_threads:
+                if thread.topic.lower() in archive_set:
+                    newly_archived.append(thread)
+                else:
+                    remaining.append(thread)
+            updated = updated.model_copy(update={
+                "current_threads": remaining,
+                "archived_threads": newly_archived,
+            })
+
         path = self._store.write_person(updated)
         self._git.auto_commit(
             "people", f"Updated {updated.display_name}", paths=[path],
         )
         return {"updated": person_id, "display_name": updated.display_name}
 
-    def _update_last_contact(self, people_names: list[str], event_date: date) -> None:
-        """Update last_contact for people mentioned in an event."""
-        if not people_names:
-            return
+    async def _handle_update_locations(self, args: dict[str, Any]) -> Any:
+        locations = args.get("locations", {})
+        if not locations:
+            return {"updated": False}
+        prefs = self._store.read_preferences()
+        prefs.locations.update(locations)
+        self._store.write_preferences(prefs)
+        self._git.auto_commit("preferences", "Updated locations")
+        return {"updated": True, "locations": prefs.locations}
+
+    async def _handle_add_note(self, args: dict[str, Any]) -> Any:
+        note = args.get("note", "")
+        if not note:
+            return {"updated": False}
+        prefs = self._store.read_preferences()
+        prefs.notes.append(note)
+        self._store.write_preferences(prefs)
+        self._git.auto_commit("preferences", "Added note")
+        return {"updated": True, "note": note}
+
+    def _find_unmatched_people(self, people_names: list[str]) -> tuple[list[str], list[str]]:
+        """Split names into matched (existing) and unmatched (unknown)."""
         all_people = self._store.read_all_people()
-        lower_names = {n.lower() for n in people_names}
-        for person in all_people:
-            if (
-                person.display_name.lower() in lower_names
-                and (person.last_contact is None or event_date > person.last_contact)
-            ):
-                updated = person.model_copy(update={"last_contact": event_date})
-                self._store.write_person(updated)
+        existing: set[str] = {p.display_name.lower() for p in all_people}
+        matched: list[str] = []
+        unmatched: list[str] = []
+        for name in people_names:
+            if name.lower() in existing:
+                matched.append(name)
+            else:
+                unmatched.append(name)
+        return matched, unmatched
+
+    def _find_near_matches(self, name: str) -> list[str]:
+        """Find existing people whose names are similar to the given name."""
+        all_people = self._store.read_all_people()
+        name_lower = name.lower()
+        suggestions: list[str] = []
+        for p in all_people:
+            existing = p.display_name.lower()
+            if name_lower in existing or existing in name_lower:
+                suggestions.append(p.display_name)
+        return suggestions
+
+    def _auto_create_people(self, people_names: list[str], memory_date: date) -> None:
+        """Auto-create Person files for the given names."""
+        all_people = self._store.read_all_people()
+        existing: set[str] = {p.display_name.lower() for p in all_people}
+        for name in people_names:
+            if name.lower() not in existing:
+                new_person = Person(
+                    person_id=_slugify(name),
+                    display_name=name,
+                    relationship="unknown",
+                )
+                path = self._store.write_person(new_person)
+                self._git.auto_commit(
+                    "people", f"Auto-created {name}", paths=[path],
+                )
+                existing.add(name.lower())
 
     async def _handle_describe_attachment(self, args: dict[str, Any]) -> Any:
         file_path = args.get("file_path", "")
@@ -256,8 +426,9 @@ class ToolExecutor:
             # Vision API for images
             image_bytes = path.read_bytes()
             image_b64 = base64.b64encode(image_bytes).decode()
-            context = self._store.read_context()
-            messages = describe_image(image_b64, context)
+            people = self._store.read_all_people()
+            prefs = self._store.read_preferences()
+            messages = describe_image(image_b64, people, prefs)
             response = await self._llm.chat(messages, model=self._model, temperature=0.5)
             return {"description": response.content or "Could not describe image."}
 
@@ -282,13 +453,13 @@ def _parse_date(value: str | None) -> date | None:
         return None
 
 
-def _event_summary(event: Event) -> dict[str, Any]:
+def _memory_summary(memory: Memory) -> dict[str, Any]:
     return {
-        "id": event.id,
-        "date": str(event.date),
-        "title": event.title,
-        "type": event.type,
-        "description": event.description,
-        "people": event.people,
-        "location": event.location,
+        "id": memory.id,
+        "date": str(memory.date),
+        "title": memory.title,
+        "type": memory.type,
+        "description": memory.description,
+        "people": memory.people,
+        "location": memory.location,
     }

@@ -130,7 +130,7 @@ class TestLLMClient:
                             "id": "call_abc123",
                             "type": "function",
                             "function": {
-                                "name": "list_events",
+                                "name": "list_memories",
                                 "arguments": '{"date_from": "2026-02-24"}',
                             },
                         }
@@ -147,7 +147,7 @@ class TestLLMClient:
         result = await client.chat_with_tools(
             [{"role": "user", "content": "What happened today?"}],
             model="test-model",
-            tools=[{"type": "function", "function": {"name": "list_events"}}],
+            tools=[{"type": "function", "function": {"name": "list_memories"}}],
         )
 
         assert result.content is None
@@ -155,7 +155,7 @@ class TestLLMClient:
         tc = result.tool_calls[0]
         assert isinstance(tc, ToolCall)
         assert tc.id == "call_abc123"
-        assert tc.function_name == "list_events"
+        assert tc.function_name == "list_memories"
         assert '"date_from"' in tc.arguments
 
     async def test_chat_with_tools_text_response(self):

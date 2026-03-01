@@ -1,4 +1,4 @@
-"""Morning digest flow: query events, score, LLM story, send, git commit."""
+"""Morning digest flow: query memories, score, LLM story, send, git commit."""
 
 from __future__ import annotations
 
@@ -7,12 +7,12 @@ import logging
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from elephant.brain.clarification import is_thin_event
+from elephant.brain.clarification import is_thin_memory
 from elephant.data.models import PendingQuestion, Person
-from elephant.event_scorer import score_event
 from elephant.llm.prompts import generate_question_text, morning_digest, morning_question
+from elephant.memory_scorer import score_memory
 
 if TYPE_CHECKING:
     from elephant.data.store import DataStore
@@ -128,31 +128,35 @@ class MorningDigestFlow:
         now = datetime.now(UTC)
         today = now.date()
 
-        # 1. Query events for today's month/day across all years
-        events = self._store.query_events_by_month_day(now.month, now.day)
+        # 1. Query memories for today's month/day across all years
+        memories = self._store.query_memories_by_month_day(now.month, now.day)
 
         # 2. Check for upcoming birthdays
         people = self._store.read_all_people()
         birthdays = find_upcoming_birthdays(people, today)
 
-        if not events and not birthdays:
-            logger.info("No events for %02d/%02d, trying question fallback", now.month, now.day)
+        if not memories and not birthdays:
+            logger.info("No memories for %02d/%02d, trying question fallback", now.month, now.day)
             return await self._send_question_fallback()
 
-        # 3. Score and rank events
+        # 3. Score and rank memories
         prefs = self._store.read_preferences()
-        top_events = []
-        if events:
-            scored = [(e, score_event(e, prefs.nostalgia_weights)) for e in events]
+        top_memories: list[Any] = []
+        if memories:
+            scored = [(m, score_memory(m, prefs.nostalgia_weights)) for m in memories]
             scored.sort(key=lambda x: x[1], reverse=True)
-            top_events = [e for e, _ in scored[:5]]
+            top_memories = [m for m, _ in scored[:5]]
 
         # 4. Generate digest via LLM
-        context = self._store.read_context()
-        include_fields = {"date", "title", "description", "people", "location"}
-        events_data = [
-            e.model_dump(mode="json", include=include_fields)
-            for e in top_events
+        memories_data = [
+            {
+                "date": m.date.isoformat(),
+                "title": m.resolved_value("title"),
+                "description": m.resolved_value("description"),
+                "people": m.resolved_value("people"),
+                "location": m.resolved_value("location"),
+            }
+            for m in top_memories
         ]
         birthday_data: list[dict[str, str | int | bool]] | None = None
         if birthdays:
@@ -165,8 +169,9 @@ class MorningDigestFlow:
                 for r in birthdays
             ]
         messages = morning_digest(
-            events_data,
-            context,
+            memories_data,
+            people,
+            prefs,
             tone_style=prefs.tone_preference.style,
             tone_length=prefs.tone_preference.length,
             birthdays=birthday_data,
@@ -186,7 +191,7 @@ class MorningDigestFlow:
         state = self._store.read_digest_state()
         state = state.model_copy(update={
             "last_digest_sent_at": now,
-            "last_digest_event_ids": [e.id for e in top_events],
+            "last_digest_memory_ids": [m.id for m in top_memories],
             "last_digest_message_id": first_success.message_id,
         })
         self._store.write_digest_state(state)
@@ -194,17 +199,18 @@ class MorningDigestFlow:
         # 6. Git commit
         self._git.auto_commit(
             "morning",
-            f"Digest sent ({len(top_events)} events)",
+            f"Digest sent ({len(top_memories)} memories)",
             timestamp=now.date(),
         )
 
-        logger.info("Morning digest sent with %d events", len(top_events))
+        logger.info("Morning digest sent with %d memories", len(top_memories))
         return True
 
     async def _send_question_fallback(self) -> bool:
-        """Send a question instead of a digest when there are no events for today."""
+        """Send a question instead of a digest when there are no memories for today."""
         pq = self._store.read_pending_questions()
-        context = self._store.read_context()
+        people = self._store.read_all_people()
+        prefs = self._store.read_preferences()
         question: PendingQuestion | None = None
 
         # 1. Pick first pending question
@@ -213,21 +219,21 @@ class MorningDigestFlow:
                 question = q
                 break
 
-        # 2. No pending questions — scan events for thin ones
+        # 2. No pending questions — scan memories for thin ones
         if question is None:
-            all_events = self._store.list_events(limit=100)
-            for event in all_events:
-                if is_thin_event(event):
+            all_memories = self._store.list_memories(limit=100)
+            for memory in all_memories:
+                if is_thin_memory(memory):
                     messages = generate_question_text(
-                        "event_enrichment", event.id, context,
+                        "memory_enrichment", memory.id, people, prefs,
                     )
                     response = await self._llm.chat(
                         messages, model=self._model, temperature=0.7,
                     )
                     question = PendingQuestion(
                         id=f"q_{uuid.uuid4().hex[:8]}",
-                        type="event_enrichment",
-                        subject=event.id,
+                        type="memory_enrichment",
+                        subject=memory.id,
                         question=(response.content or "").strip(),
                         status="pending",
                         created_at=datetime.now(UTC),
@@ -235,9 +241,9 @@ class MorningDigestFlow:
                     pq.questions.append(question)
                     break
 
-        # 3. No thin events — generate a context_gap question
+        # 3. No thin memories — generate a context_gap question
         if question is None:
-            messages = generate_question_text("context_gap", "family", context)
+            messages = generate_question_text("context_gap", "family", people, prefs)
             response = await self._llm.chat(
                 messages, model=self._model, temperature=0.7,
             )
@@ -253,14 +259,14 @@ class MorningDigestFlow:
 
         # Generate question text if missing
         if not question.question:
-            messages = generate_question_text(question.type, question.subject, context)
+            messages = generate_question_text(question.type, question.subject, people, prefs)
             response = await self._llm.chat(
                 messages, model=self._model, temperature=0.7,
             )
             question.question = (response.content or "").strip()
 
         # 4. Wrap in a morning greeting via LLM
-        messages = morning_question(question.question, context)
+        messages = morning_question(question.question, people, prefs)
         response = await self._llm.chat(messages, model=self._model, temperature=0.7)
         greeting_text = (response.content or "").strip()
 

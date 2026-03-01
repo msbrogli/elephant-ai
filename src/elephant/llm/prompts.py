@@ -2,18 +2,41 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from elephant.data.models import Person, PreferencesFile
 
 
-def parse_event(text: str, context: dict[str, Any]) -> list[dict[str, str]]:
-    """Prompt to parse free-text message into an event."""
-    context_str = _format_context(context)
+def _build_context_str(
+    people: list[Person],
+    prefs: PreferencesFile,
+) -> str:
+    """Build context string from Person summaries + preferences."""
+    parts: list[str] = []
+    if people:
+        names = [f"{p.display_name} ({p.relationship})" for p in people]
+        parts.append(f"People: {', '.join(names)}")
+    if prefs.locations:
+        parts.append(f"Locations: {', '.join(prefs.locations.keys())}")
+    if prefs.notes:
+        parts.append(f"Notes: {'; '.join(prefs.notes)}")
+    return "\n".join(parts) if parts else "(no context available)"
+
+
+def parse_memory(
+    text: str,
+    people: list[Person],
+    prefs: PreferencesFile,
+) -> list[dict[str, str]]:
+    """Prompt to parse free-text message into a memory."""
+    context_str = _build_context_str(people, prefs)
     return [
         {
             "role": "system",
             "content": (
                 "You are a family memory assistant. Parse the user's message into a structured "
-                "event. Respond ONLY with valid YAML (no markdown fencing).\n\n"
+                "memory. Respond ONLY with valid YAML (no markdown fencing).\n\n"
                 "Required fields:\n"
                 "  title: short title\n"
                 "  type: milestone | daily | outing | celebration"
@@ -23,7 +46,8 @@ def parse_event(text: str, context: dict[str, Any]) -> list[dict[str, str]]:
                 "  people: list of names\n"
                 "  location: place or null\n"
                 "  nostalgia_score: 0.5-2.0 (higher for milestones)\n"
-                "  tags: list of relevant tags\n\n"
+                "  tags: list of relevant tags\n"
+                "  confidence: 0.0-1.0 (how confident you are in the extraction)\n\n"
                 f"Family context:\n{context_str}"
             ),
         },
@@ -31,18 +55,23 @@ def parse_event(text: str, context: dict[str, Any]) -> list[dict[str, str]]:
     ]
 
 
-def parse_events_batch(
-    caption: str, document_content: str, context: dict[str, Any]
+
+
+def parse_memories_batch(
+    caption: str,
+    document_content: str,
+    people: list[Person],
+    prefs: PreferencesFile,
 ) -> list[dict[str, Any]]:
-    """Prompt to parse document contents into multiple events."""
-    context_str = _format_context(context)
+    """Prompt to parse document contents into multiple memories."""
+    context_str = _build_context_str(people, prefs)
     return [
         {
             "role": "system",
             "content": (
                 "You are a family memory assistant. The user sent a file with structured data "
                 "(JSON, CSV, etc.) containing multiple events. Parse the file contents into a "
-                "YAML list of events.\n\n"
+                "YAML list of memories.\n\n"
                 "The user's caption describes how to interpret the data.\n\n"
                 "Each item in the list must have:\n"
                 "  title: short title\n"
@@ -80,20 +109,23 @@ def parse_events_batch(
     ]
 
 
+
+
 def morning_digest(
-    events: list[dict[str, Any]],
-    context: dict[str, Any],
+    memories: list[dict[str, Any]],
+    people: list[Person],
+    prefs: PreferencesFile,
     tone_style: str = "heartfelt",
     tone_length: str = "short",
     birthdays: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, str]]:
     """Prompt to generate a morning digest story."""
-    context_str = _format_context(context)
-    events_str = "\n---\n".join(
+    context_str = _build_context_str(people, prefs)
+    memories_str = "\n---\n".join(
         f"Date: {e.get('date')}\nTitle: {e.get('title')}\n"
         f"Description: {e.get('description')}\nPeople: {e.get('people')}\n"
         f"Location: {e.get('location', 'N/A')}"
-        for e in events
+        for e in memories
     )
 
     birthday_section = ""
@@ -128,8 +160,8 @@ def morning_digest(
     )
 
     user_content = (
-        f"Today's memories from previous years:\n\n{events_str}"
-        if events_str
+        f"Today's memories from previous years:\n\n{memories_str}"
+        if memories_str
         else "No memories found for today."
     )
 
@@ -139,9 +171,12 @@ def morning_digest(
     ]
 
 
-def evening_checkin(context: dict[str, Any]) -> list[dict[str, str]]:
+def evening_checkin(
+    people: list[Person],
+    prefs: PreferencesFile,
+) -> list[dict[str, str]]:
     """Prompt to generate an evening check-in message."""
-    context_str = _format_context(context)
+    context_str = _build_context_str(people, prefs)
     return [
         {
             "role": "system",
@@ -190,17 +225,18 @@ def classify_sentiment(text: str) -> list[dict[str, str]]:
 
 
 def generate_clarification(
-    event_title: str,
-    event_description: str,
-    context: dict[str, Any],
+    memory_title: str,
+    memory_description: str,
+    people: list[Person],
+    prefs: PreferencesFile,
 ) -> list[dict[str, str]]:
-    """Prompt to generate a follow-up question for a thin event."""
-    context_str = _format_context(context)
+    """Prompt to generate a follow-up question for a thin memory."""
+    context_str = _build_context_str(people, prefs)
     return [
         {
             "role": "system",
             "content": (
-                "You are a family memory assistant. The user logged a brief event that lacks "
+                "You are a family memory assistant. The user logged a brief memory that lacks "
                 "detail. Generate ONE short, friendly follow-up question to enrich the memory. "
                 "Focus on: who was there, where it happened, or what made it special.\n\n"
                 f"Family context:\n{context_str}"
@@ -208,32 +244,32 @@ def generate_clarification(
         },
         {
             "role": "user",
-            "content": f"Event: {event_title}\nDescription: {event_description}",
+            "content": f"Memory: {memory_title}\nDescription: {memory_description}",
         },
     ]
 
 
-def enrich_event(
-    event_title: str,
-    event_description: str,
+def enrich_memory(
+    memory_title: str,
+    memory_description: str,
     question: str,
     answer: str,
 ) -> list[dict[str, str]]:
-    """Prompt to enrich an event with the user's answer to a follow-up question."""
+    """Prompt to enrich a memory with the user's answer to a follow-up question."""
     return [
         {
             "role": "system",
             "content": (
                 "You are a family memory assistant. The user answered a follow-up question "
-                "about an event. Generate an updated description that incorporates the new info. "
+                "about a memory. Generate an updated description that incorporates the new info. "
                 "Respond with ONLY the updated description text."
             ),
         },
         {
             "role": "user",
             "content": (
-                f"Original title: {event_title}\n"
-                f"Original description: {event_description}\n"
+                f"Original title: {memory_title}\n"
+                f"Original description: {memory_description}\n"
                 f"Question asked: {question}\n"
                 f"User's answer: {answer}"
             ),
@@ -241,49 +277,15 @@ def enrich_event(
     ]
 
 
-def enrich_context(
-    text: str, current_context: dict[str, Any], *, now: str | None = None,
-) -> list[dict[str, str]]:
-    """Prompt to extract context updates from user message."""
-    from datetime import UTC
-    from datetime import datetime as _dt
-
-    now_str = now or _dt.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
-    context_str = _format_context(current_context)
-    return [
-        {
-            "role": "system",
-            "content": (
-                "You are a family memory assistant. The user is sharing family context info. "
-                "Extract structured updates. "
-                "Respond ONLY with valid YAML (no markdown fencing).\n\n"
-                f"Current date/time: {now_str}\n"
-                "IMPORTANT: Resolve all relative dates (e.g. 'two weeks ago', 'last month', "
-                "'yesterday') into absolute dates (YYYY-MM-DD) using the current date above.\n\n"
-                "Possible updates (use a list when there are multiple items):\n"
-                "  family_members:\n"
-                "    - {name, role, birthday?}\n"
-                "  friends:\n"
-                "    - {name, relationship}\n"
-                "  locations:\n"
-                "    - {name, description}\n"
-                "  notes:\n"
-                "    - free-text fact (resolve any relative dates to absolute)\n"
-                "  person_updates:\n"
-                "    - {name, field, value}\n\n"
-                f"Current context:\n{context_str}"
-            ),
-        },
-        {"role": "user", "content": text},
-    ]
 
 
 def morning_question(
     question_text: str,
-    context: dict[str, Any],
+    people: list[Person],
+    prefs: PreferencesFile,
 ) -> list[dict[str, str]]:
-    """Prompt to wrap a question in a morning greeting when there are no events for today."""
-    context_str = _format_context(context)
+    """Prompt to wrap a question in a morning greeting when there are no memories for today."""
+    context_str = _build_context_str(people, prefs)
     return [
         {
             "role": "system",
@@ -303,10 +305,11 @@ def morning_question(
 def generate_question_text(
     question_type: str,
     subject: str,
-    context: dict[str, Any],
+    people: list[Person],
+    prefs: PreferencesFile,
 ) -> list[dict[str, str]]:
     """Prompt to generate a natural-language question from a pending question record."""
-    context_str = _format_context(context)
+    context_str = _build_context_str(people, prefs)
     return [
         {
             "role": "system",
@@ -322,9 +325,13 @@ def generate_question_text(
     ]
 
 
-def describe_image(image_base64: str, context: dict[str, Any]) -> list[dict[str, Any]]:
+def describe_image(
+    image_base64: str,
+    people: list[Person],
+    prefs: PreferencesFile,
+) -> list[dict[str, Any]]:
     """Prompt to describe an image for a family memory log using vision."""
-    context_str = _format_context(context)
+    context_str = _build_context_str(people, prefs)
     return [
         {
             "role": "system",
@@ -349,60 +356,67 @@ def describe_image(image_base64: str, context: dict[str, Any]) -> list[dict[str,
 
 
 def conversational_system_prompt(
-    context: dict[str, Any],
-    people_names: list[str],
+    people: list[Person],
+    prefs: PreferencesFile,
     today: str,
+    last_contacts: dict[str, Any] | None = None,
 ) -> str:
     """Build the system prompt for the conversational agent."""
-    context_str = _format_context(context)
-    people_str = ", ".join(people_names) if people_names else "(none registered)"
+    context_str = _build_context_str(people, prefs)
+
+    # Build rich people summary
+    people_lines: list[str] = []
+    for p in people:
+        line = f"- {p.display_name} ({p.relationship})"
+        if p.current_threads:
+            threads = ", ".join(t.topic for t in p.current_threads)
+            line += f" [threads: {threads}]"
+        if last_contacts and last_contacts.get(p.display_name):
+            line += f" [last contact: {last_contacts[p.display_name]}]"
+        people_lines.append(line)
+    people_str = "\n".join(people_lines) if people_lines else "(none registered)"
+
     return (
-        "You are My Little Elephant, a warm and friendly family memory assistant. "
-        "You help a family record, organize, and recall their memories.\n\n"
-        f"Today's date: {today}\n\n"
-        f"Family context:\n{context_str}\n\n"
-        f"Known people: {people_str}\n\n"
-        "Guidelines:\n"
-        "- When the user describes something that happened, use `create_event` to save it.\n"
-        "- When the user asks about memories or what happened, use `list_events` or "
-        "`get_event` to search and retrieve.\n"
-        "- When the user shares family information (names, birthdays, relationships), "
-        "use `update_context`.\n"
-        "- When the user asks about the family or context, use `get_context`.\n"
-        "- For general questions or conversation, respond naturally without tools.\n"
-        "- Keep responses concise and warm. Use the family's names when possible.\n"
-        "- When creating events, confirm what you saved in a friendly way.\n"
-        "- When listing events, summarize them naturally rather than dumping raw data.\n"
-        "- When the user sends a file (photo or document), use `describe_attachment` to view/read "
-        "it before responding. The file path is in the [Attachments] section.\n"
+        "### ROLE\n"
+        "You are 'My Little Elephant,' a warm, wise, and nostalgic family memory keeper. "
+        "Your voice is intimate and gentle, like a well-loved family historian. You don't just 'store data'; "
+        "you 'safeguard stories.'\n\n"
+        
+        "### CONTEXT\n"
+        f"Today's Date: {today}\n"
+        f"Family Profile: {context_str}\n"
+        f"Known People: {people_str}\n\n"
+        
+        "### OPERATIONAL GUIDELINES\n"
+        "1. **Segment & Route**: A single message may contain multiple memories or updates. "
+        "Process each independently. Use `create_memory` for events and `update_person` for life-state changes.\n"
+        
+        "2. **The 5Ws + H**: When a user shares a memory, ensure you capture Who, What, When, Where, Why, and How. "
+        "If the details are 'thin,' ask ONE warm follow-up question to enrich the story.\n"
+        
+        "3. **Entity Integrity**: Never guess a person's identity. If a first name is ambiguous, use `search_people`. "
+        "If a person is new, ask for their full name and relationship before using `auto_create_people: true`.\n"
+        
+        "4. **Immutable Past**: We never rewrite history. When updating a past memory, use the `corrections` "
+        "parameter to explain *why* the change happened, preserving the original narrative.\n"
+        
+        "5. **Conflict Resolution**: If `update_person` reveals a conflict (e.g., a different wedding date), "
+        "do not overwrite silently. Ask: 'I remember James's wedding was June 15th—has it moved to July 2nd?'\n"
+        
+        "6. **Thread Management**: After an event, update the relevant person's `current_threads`. "
+        "If a life chapter (like 'Wedding Planning') concludes, move it to `archive_threads`.\n"
+        
+        "7. **Confidence & Clarity**: Assign a `confidence_score` (0.0-1.0) to every extraction. "
+        "If you are unsure (< 0.8), ask for clarification instead of saving potentially 'drifting' data.\n\n"
+        
+        "### TONE & STYLE\n"
+        "- **Concise Warmth**: Be brief but soulful. Use names (e.g., 'I've tucked that away for Lily').\n"
+        "- **Visuals**: If a file is provided, use `describe_attachment` first. Treat photos as 'windows into the memory.'\n"
+        "- **Narrative Recall**: When listing memories, don't dump data. Tell a short, 2-sentence story.\n\n"
+        
+        "### TOOL PROTOCOL\n"
+        "- New Event? -> `create_memory`\n"
+        "- Life Update? -> `update_person` (Current Threads)\n"
+        "- Searching? -> `list_memories` / `get_memory` / `search_people`\n"
+        "- Ambiguity? -> Ask the user before calling tools.\n"
     )
-
-
-def _format_context(context: dict[str, Any]) -> str:
-    """Format context dict into a readable string for prompts."""
-    if not context:
-        return "(no context available)"
-    parts: list[str] = []
-    members = context.get("family", {}).get("members", [])
-    if members:
-        names = [f"{m.get('name', '?')} ({m.get('role', '?')})" for m in members]
-        parts.append(f"Family: {', '.join(names)}")
-    friends = context.get("friends", [])
-    if friends:
-        names = [f"{f.get('name', '?')}" for f in friends]
-        parts.append(f"Friends: {', '.join(names)}")
-    locations = context.get("locations", {})
-    if locations:
-        parts.append(f"Locations: {', '.join(locations.keys())}")
-    notes = context.get("notes", [])
-    if notes:
-        formatted = []
-        for n in notes:
-            if isinstance(n, dict):
-                txt = n.get("text", "")
-                dt = n.get("date", "")
-                formatted.append(f"[{dt}] {txt}" if dt else txt)
-            else:
-                formatted.append(str(n))
-        parts.append(f"Notes: {'; '.join(formatted)}")
-    return "\n".join(parts) if parts else "(no context available)"

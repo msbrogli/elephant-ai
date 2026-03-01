@@ -72,7 +72,7 @@ def flow_deps(data_dir):
 
 
 class TestAnytimeLogFlow:
-    async def test_new_event_routes_to_agent(self, flow_deps):
+    async def test_new_memory_routes_to_agent(self, flow_deps):
         flow, store, llm, messaging, git = flow_deps
 
         msg = _make_message("We went to the park with Lily today")
@@ -113,7 +113,7 @@ class TestAnytimeLogFlow:
         # Set up digest state
         state = DigestState(
             last_digest_sent_at=datetime.now(UTC),
-            last_digest_event_ids=["20260224_test"],
+            last_digest_memory_ids=["20260224_test"],
             last_digest_message_id="digest_msg_1",
         )
         store.write_digest_state(state)
@@ -136,7 +136,7 @@ class TestAnytimeLogFlow:
         now = datetime.now(UTC)
         state = DigestState(
             last_digest_sent_at=now - timedelta(minutes=5),
-            last_digest_event_ids=["20260224_test"],
+            last_digest_memory_ids=["20260224_test"],
         )
         store.write_digest_state(state)
 
@@ -152,12 +152,12 @@ class TestAnytimeLogFlow:
     async def test_answer_to_question(self, flow_deps):
         flow, store, llm, messaging, git = flow_deps
 
-        # Create an event and a question
+        # Create a memory and a question
         from datetime import date
 
-        from elephant.data.models import Event
+        from elephant.data.models import Memory
 
-        event = Event(
+        memory = Memory(
             id="20260224_park_day",
             date=date(2026, 2, 24),
             title="Park day",
@@ -166,13 +166,13 @@ class TestAnytimeLogFlow:
             people=[],
             source="WhatsApp",
         )
-        store.write_event(event)
+        store.write_memory(memory)
 
         pq = PendingQuestionsFile(
             questions=[
                 PendingQuestion(
                     id="q_001",
-                    type="event_enrichment",
+                    type="memory_enrichment",
                     subject="20260224_park_day",
                     question="Who was there?",
                     status="asked",
@@ -209,7 +209,7 @@ class TestAnytimeLogFlow:
             call_count += 1
             if call_count == 1:
                 # Intent classification
-                return LLMResponse(content="new_event", model="m", usage={})
+                return LLMResponse(content="new_memory", model="m", usage={})
             else:
                 # Batch parse
                 return LLMResponse(
@@ -239,5 +239,5 @@ class TestAnytimeLogFlow:
         await flow.handle_message(msg)
 
         call_text = messaging.send_text.call_args[0][0]
-        assert "1 events" in call_text or "Logged 1" in call_text
+        assert "1 memories" in call_text or "Logged 1" in call_text
         assert "Mom's birthday" in call_text

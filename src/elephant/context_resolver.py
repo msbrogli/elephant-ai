@@ -1,13 +1,18 @@
 """Determine message intent from metadata and timing."""
 
+from __future__ import annotations
+
 import logging
 from datetime import timedelta
 from enum import Enum
+from typing import TYPE_CHECKING
 
-from elephant.data.models import DigestState, PendingQuestionsFile
-from elephant.llm.client import LLMClient
 from elephant.llm.prompts import classify_intent
-from elephant.messaging.base import IncomingMessage
+
+if TYPE_CHECKING:
+    from elephant.data.models import DigestState, PendingQuestionsFile
+    from elephant.llm.client import LLMClient
+    from elephant.messaging.base import IncomingMessage
 
 logger = logging.getLogger(__name__)
 
@@ -16,10 +21,11 @@ DIGEST_FEEDBACK_WINDOW = timedelta(minutes=30)
 
 
 class Intent(Enum):
-    NEW_EVENT = "new_event"
+    NEW_MEMORY = "new_memory"
     DIGEST_FEEDBACK = "digest_feedback"
     ANSWER_TO_QUESTION = "answer_to_question"
     CONTEXT_UPDATE = "context_update"
+
 
 
 async def resolve_intent(
@@ -36,7 +42,7 @@ async def resolve_intent(
     2. reply_to_id matches an asked question → ANSWER_TO_QUESTION
     3. Within 30 min of digest send → DIGEST_FEEDBACK
     4. LLM classifies as context update → CONTEXT_UPDATE
-    5. Default → NEW_EVENT
+    5. Default → NEW_MEMORY
     """
     # 1. Reply to digest
     if (
@@ -75,7 +81,7 @@ async def resolve_intent(
             if label == "answer_to_question" and message.reply_to_id:
                 return Intent.ANSWER_TO_QUESTION
         except Exception:
-            logger.warning("LLM intent classification failed, defaulting to NEW_EVENT")
+            logger.warning("LLM intent classification failed, defaulting to NEW_MEMORY")
 
     # 5. Default
-    return Intent.NEW_EVENT
+    return Intent.NEW_MEMORY

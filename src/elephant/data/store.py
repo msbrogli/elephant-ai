@@ -10,21 +10,23 @@ import yaml
 
 from elephant.atomic import atomic_write
 from elephant.data.models import (
-    AuthorizedChat,
     AuthorizedChatsFile,
+    ChatHistoryEntry,
+    ChatHistoryFile,
     DigestState,
-    Event,
+    Memory,
     PendingQuestionsFile,
     Person,
     PhotoEntry,
     PreferencesFile,
+    RawMessage,
     VideoEntry,
 )
 from elephant.data.schemas import DIR_SCHEMAS, SINGLE_FILE_SCHEMAS
 
 # Directories to create under data_dir
 _DIRS = [
-    "events",
+    "memories",
     "photo_index",
     "video_index",
     "people",
@@ -45,7 +47,7 @@ class DataStore:
         for d in _DIRS:
             os.makedirs(os.path.join(self.data_dir, d), exist_ok=True)
 
-        # Deploy directory schemas (e.g. events/_schema.yaml)
+        # Deploy directory schemas (e.g. memories/_schema.yaml)
         for rel_path, content in DIR_SCHEMAS.items():
             full_path = os.path.join(self.data_dir, rel_path)
             os.makedirs(os.path.dirname(full_path), exist_ok=True)
@@ -62,40 +64,9 @@ class DataStore:
         if not os.path.exists(gitignore_path):
             atomic_write(
                 gitignore_path,
-                "faces/\nlogs/\n*.jpg\n*.jpeg\n*.png\n*.mp4\n*.mov\n",
+                "faces/\nlogs/\nchat_history.yaml\n*.jpg\n*.jpeg\n*.png\n*.mp4\n*.mov\n",
             )
 
-        # Migrate legacy people.yaml to people/ directory
-        self._migrate_people_file()
-
-        # Migrate legacy authorized_chat_id
-        ac = self.read_authorized_chats()
-        if not ac.chats:
-            state = self.read_digest_state()
-            if state.authorized_chat_id:
-                ac.chats.append(
-                    AuthorizedChat(chat_id=state.authorized_chat_id, status="approved")
-                )
-                self.write_authorized_chats(ac)
-
-    def _migrate_people_file(self) -> None:
-        """Migrate legacy people.yaml to people/ directory. Idempotent."""
-        old_path = os.path.join(self.data_dir, "people.yaml")
-        if not os.path.exists(old_path):
-            return
-        raw = self._read_yaml(old_path)
-        if not isinstance(raw, dict):
-            os.remove(old_path)
-            return
-        people_list = raw.get("people", [])
-        if not people_list:
-            os.remove(old_path)
-            return
-        for person_data in people_list:
-            if isinstance(person_data, dict) and "person_id" in person_data:
-                person = Person.model_validate(person_data)
-                self.write_person(person)
-        os.remove(old_path)
 
     def media_dir(self) -> str:
         """Return the path to the media directory."""
@@ -103,13 +74,13 @@ class DataStore:
 
     # --- Path helpers ---
 
-    def _event_path(self, event_date: date, slug: str) -> str:
+    def _memory_path(self, memory_date: date, slug: str) -> str:
         return os.path.join(
             self.data_dir,
-            "events",
-            event_date.strftime("%Y"),
-            event_date.strftime("%m"),
-            f"{event_date.strftime('%Y%m%d')}_{slug}.yaml",
+            "memories",
+            memory_date.strftime("%Y"),
+            memory_date.strftime("%m"),
+            f"{memory_date.strftime('%Y%m%d')}_{slug}.yaml",
         )
 
     def _photo_index_path(self, index_date: date) -> str:
@@ -145,19 +116,19 @@ class DataStore:
         content = yaml.dump(data, default_flow_style=False, allow_unicode=True, sort_keys=False)
         atomic_write(path, content)
 
-    # --- Events ---
+    # --- Memories ---
 
-    def write_event(self, event: Event) -> str:
-        """Write an event to its date-based path. Returns the file path."""
-        slug = event.id.split("_", 1)[1] if "_" in event.id else event.id
-        path = self._event_path(event.date, slug)
-        self._write_yaml(path, event.model_dump(mode="json", exclude_none=True))
+    def write_memory(self, memory: Memory) -> str:
+        """Write a memory to its date-based path. Returns the file path."""
+        slug = memory.id.split("_", 1)[1] if "_" in memory.id else memory.id
+        path = self._memory_path(memory.date, slug)
+        self._write_yaml(path, memory.model_dump(mode="json", exclude_none=True))
         return path
 
-    def read_event(self, path: str) -> Event:
-        """Read an event from a YAML file."""
+    def read_memory(self, path: str) -> Memory:
+        """Read a memory from a YAML file."""
         data = self._read_yaml(path)
-        return Event.model_validate(data)
+        return Memory.model_validate(data)
 
     # --- Photo Index ---
 
@@ -270,6 +241,8 @@ class DataStore:
             {
                 "nostalgia_weights": raw.get("nostalgia_weights", {}),
                 "tone_preference": raw.get("tone_preference", {}),
+                "locations": raw.get("locations", {}),
+                "notes": raw.get("notes", []),
             }
         )
 
@@ -291,15 +264,6 @@ class DataStore:
             pq.model_dump(mode="json", exclude_none=True),
         )
 
-    # --- Context (free-form dict) ---
-
-    def read_context(self) -> dict[str, Any]:
-        raw = self._read_single_file("context.yaml")
-        return {k: v for k, v in raw.items() if k != "_schema"}
-
-    def write_context(self, context: dict[str, Any]) -> None:
-        self._write_single_file("context.yaml", context)
-
     # --- Digest State ---
 
     def read_digest_state(self) -> DigestState:
@@ -307,9 +271,8 @@ class DataStore:
         return DigestState.model_validate(
             {
                 "last_digest_sent_at": raw.get("last_digest_sent_at"),
-                "last_digest_event_ids": raw.get("last_digest_event_ids", []),
+                "last_digest_memory_ids": raw.get("last_digest_memory_ids", []),
                 "last_digest_message_id": raw.get("last_digest_message_id"),
-                "authorized_chat_id": raw.get("authorized_chat_id"),
             }
         )
 
@@ -331,20 +294,119 @@ class DataStore:
             ac.model_dump(mode="json", exclude_none=True),
         )
 
-    # --- Event querying ---
+    # --- Chat History ---
 
-    def query_events_by_month_day(self, month: int, day: int) -> list[Event]:
-        """Find events matching a given month and day across all years."""
-        events_dir = os.path.join(self.data_dir, "events")
-        if not os.path.isdir(events_dir):
+    def read_chat_history(self) -> ChatHistoryFile:
+        raw = self._read_single_file("chat_history.yaml")
+        return ChatHistoryFile.model_validate({"entries": raw.get("entries", [])})
+
+    def write_chat_history(self, history: ChatHistoryFile) -> None:
+        self._write_single_file(
+            "chat_history.yaml",
+            history.model_dump(mode="json", exclude_none=True),
+        )
+
+    def append_chat_history(
+        self,
+        user_content: str,
+        assistant_content: str,
+        max_entries: int = 1000,
+    ) -> None:
+        """Append a user+assistant exchange to history, trimming old entries."""
+        from datetime import UTC, datetime
+
+        history = self.read_chat_history()
+        now = datetime.now(UTC)
+        history.entries.append(
+            ChatHistoryEntry(role="user", content=user_content, timestamp=now)
+        )
+        history.entries.append(
+            ChatHistoryEntry(role="assistant", content=assistant_content, timestamp=now)
+        )
+        if len(history.entries) > max_entries:
+            history.entries = history.entries[-max_entries:]
+        self.write_chat_history(history)
+
+    # --- Raw Messages (JSONL) ---
+
+    def _raw_messages_jsonl_path(self) -> str:
+        return os.path.join(self.data_dir, "raw_messages.jsonl")
+
+    def _raw_messages_yaml_path(self) -> str:
+        return os.path.join(self.data_dir, "raw_messages.yaml")
+
+    def read_raw_messages(self) -> list[RawMessage]:
+        """Read all raw messages from the JSONL file, skipping malformed lines."""
+        path = self._raw_messages_jsonl_path()
+        self._migrate_raw_messages_yaml_to_jsonl()
+        if not os.path.exists(path):
+            return []
+        import json as _json
+
+        results: list[RawMessage] = []
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    data = _json.loads(line)
+                    results.append(RawMessage.model_validate(data))
+                except Exception:
+                    continue
+        return results
+
+    def write_raw_messages(self, messages: list[RawMessage]) -> None:
+        """Full rewrite of the JSONL file (for migration / bulk operations)."""
+        path = self._raw_messages_jsonl_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            for msg in messages:
+                f.write(msg.model_dump_json() + "\n")
+
+    def append_raw_message(self, message: RawMessage) -> None:
+        """Append a single raw message — O(1) append-only."""
+        self._migrate_raw_messages_yaml_to_jsonl()
+        path = self._raw_messages_jsonl_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "a") as f:
+            f.write(message.model_dump_json() + "\n")
+
+    def _migrate_raw_messages_yaml_to_jsonl(self) -> None:
+        """One-time migration from raw_messages.yaml to raw_messages.jsonl."""
+        yaml_path = self._raw_messages_yaml_path()
+        jsonl_path = self._raw_messages_jsonl_path()
+        if not os.path.exists(yaml_path) or os.path.exists(jsonl_path):
+            return
+        try:
+            data = self._read_yaml(yaml_path)
+            if not isinstance(data, dict):
+                return
+            raw_list = data.get("messages", [])
+            if not raw_list:
+                # Empty YAML file — just rename to .bak
+                os.rename(yaml_path, yaml_path + ".bak")
+                return
+            messages = [RawMessage.model_validate(m) for m in raw_list]
+            self.write_raw_messages(messages)
+            os.rename(yaml_path, yaml_path + ".bak")
+        except Exception:
+            pass
+
+    # --- Memory querying ---
+
+    def query_memories_by_month_day(self, month: int, day: int) -> list[Memory]:
+        """Find memories matching a given month and day across all years."""
+        memories_dir = os.path.join(self.data_dir, "memories")
+        if not os.path.isdir(memories_dir):
             return []
 
         month_str = f"{month:02d}"
         day_str = f"{day:02d}"
-        results: list[Event] = []
+        results: list[Memory] = []
 
-        for year_name in sorted(os.listdir(events_dir)):
-            year_dir = os.path.join(events_dir, year_name)
+        for year_name in sorted(os.listdir(memories_dir)):
+            year_dir = os.path.join(memories_dir, year_name)
             if not os.path.isdir(year_dir) or year_name.startswith("_"):
                 continue
             month_dir = os.path.join(year_dir, month_str)
@@ -356,31 +418,31 @@ class DataStore:
                 # Filename format: YYYYMMDD_slug.yaml — check day digits [6:8]
                 if len(fname) >= 8 and fname[6:8] == day_str:
                     path = os.path.join(month_dir, fname)
-                    results.append(self.read_event(path))
+                    results.append(self.read_memory(path))
 
         return results
 
-    # --- Event CRUD ---
+    # --- Memory CRUD ---
 
-    def list_events(
+    def list_memories(
         self,
         date_from: date | None = None,
         date_to: date | None = None,
         people: list[str] | None = None,
-        event_type: str | None = None,
+        memory_type: str | None = None,
         tags: list[str] | None = None,
         query: str | None = None,
-        limit: int = 20,
-    ) -> list[Event]:
-        """List events with optional filters. Returns newest first."""
-        events_dir = os.path.join(self.data_dir, "events")
-        if not os.path.isdir(events_dir):
+        limit: int | None = 20,
+    ) -> list[Memory]:
+        """List memories with optional filters. Returns newest first."""
+        memories_dir = os.path.join(self.data_dir, "memories")
+        if not os.path.isdir(memories_dir):
             return []
 
-        results: list[Event] = []
+        results: list[Memory] = []
 
-        for year_name in sorted(os.listdir(events_dir)):
-            year_dir = os.path.join(events_dir, year_name)
+        for year_name in sorted(os.listdir(memories_dir)):
+            year_dir = os.path.join(memories_dir, year_name)
             if not os.path.isdir(year_dir) or year_name.startswith("_"):
                 continue
             # Skip irrelevant years
@@ -403,78 +465,108 @@ class DataStore:
                         continue
                     path = os.path.join(month_dir, fname)
                     try:
-                        event = self.read_event(path)
+                        memory = self.read_memory(path)
                     except Exception:
                         continue
 
                     # Apply filters
-                    if date_from and event.date < date_from:
+                    if date_from and memory.date < date_from:
                         continue
-                    if date_to and event.date > date_to:
+                    if date_to and memory.date > date_to:
                         continue
-                    if event_type and event.type != event_type:
+                    if memory_type and memory.type != memory_type:
                         continue
                     if people:
                         lower_people = [p.lower() for p in people]
-                        if not any(p.lower() in lower_people for p in event.people):
+                        if not any(p.lower() in lower_people for p in memory.people):
                             continue
                     if tags:
                         lower_tags = [t.lower() for t in tags]
-                        if not any(t.lower() in lower_tags for t in event.tags):
+                        if not any(t.lower() in lower_tags for t in memory.tags):
                             continue
                     if query:
                         q = query.lower()
                         if (
-                            q not in event.title.lower()
-                            and q not in event.description.lower()
+                            q not in memory.title.lower()
+                            and q not in memory.description.lower()
                         ):
                             continue
 
-                    results.append(event)
+                    results.append(memory)
 
         # Sort newest first, apply limit
         results.sort(key=lambda e: e.date, reverse=True)
-        return results[:limit]
+        return results[:limit] if limit is not None else results
 
-    def find_event_by_id(self, event_id: str) -> Event | None:
-        """Find an event by its ID. Returns None if not found."""
+    # --- Last-contact computation from memories ---
+
+    def get_latest_memory_date_for_person(self, person_name: str) -> date | None:
+        """Compute last contact date for a person by scanning memories."""
+        memories = self.list_memories(people=[person_name], limit=1)
+        return memories[0].date if memories else None
+
+    def get_latest_memory_dates_for_people(
+        self, names: list[str],
+    ) -> dict[str, date | None]:
+        """Compute last contact dates for multiple people in a single pass."""
+        if not names:
+            return {}
+        all_memories = self.list_memories(limit=None)
+        name_set = {n.lower() for n in names}
+        result: dict[str, date | None] = {n: None for n in names}
+        for memory in all_memories:
+            for person_name in memory.people:
+                key = person_name.lower()
+                if key in name_set:
+                    # Find the original name from the names list
+                    for n in names:
+                        if n.lower() == key:
+                            existing = result[n]
+                            if existing is None or memory.date > existing:
+                                result[n] = memory.date
+                            break
+        return result
+
+    def find_memory_by_id(self, memory_id: str) -> Memory | None:
+        """Find a memory by its ID. Returns None if not found."""
         # Parse date from ID (first 8 chars: YYYYMMDD)
-        if len(event_id) < 9 or event_id[8] != "_":
+        if len(memory_id) < 9 or memory_id[8] != "_":
             return None
-        date_str = event_id[:8]
-        slug = event_id[9:]
+        date_str = memory_id[:8]
+        slug = memory_id[9:]
         try:
-            event_date = date(int(date_str[:4]), int(date_str[4:6]), int(date_str[6:8]))
+            memory_date = date(int(date_str[:4]), int(date_str[4:6]), int(date_str[6:8]))
         except ValueError:
             return None
 
-        path = self._event_path(event_date, slug)
+        path = self._memory_path(memory_date, slug)
         if not os.path.exists(path):
             return None
-        return self.read_event(path)
+        return self.read_memory(path)
 
-    def update_event(self, event_id: str, updates: dict[str, Any]) -> Event | None:
-        """Update fields on an existing event. Returns updated event or None."""
-        event = self.find_event_by_id(event_id)
-        if event is None:
+    def update_memory(self, memory_id: str, updates: dict[str, Any]) -> Memory | None:
+        """Update fields on an existing memory. Returns updated memory or None."""
+        memory = self.find_memory_by_id(memory_id)
+        if memory is None:
             return None
-        updated = event.model_copy(update=updates)
-        self.write_event(updated)
+        updated = memory.model_copy(update=updates)
+        self.write_memory(updated)
         return updated
 
-    def delete_event(self, event_id: str) -> bool:
-        """Delete an event by ID. Returns True if deleted."""
-        if len(event_id) < 9 or event_id[8] != "_":
+    def delete_memory(self, memory_id: str) -> bool:
+        """Delete a memory by ID. Returns True if deleted."""
+        if len(memory_id) < 9 or memory_id[8] != "_":
             return False
-        date_str = event_id[:8]
-        slug = event_id[9:]
+        date_str = memory_id[:8]
+        slug = memory_id[9:]
         try:
-            event_date = date(int(date_str[:4]), int(date_str[4:6]), int(date_str[6:8]))
+            memory_date = date(int(date_str[:4]), int(date_str[4:6]), int(date_str[6:8]))
         except ValueError:
             return False
 
-        path = self._event_path(event_date, slug)
+        path = self._memory_path(memory_date, slug)
         if not os.path.exists(path):
             return False
         os.remove(path)
         return True
+

@@ -6,24 +6,24 @@ from unittest.mock import AsyncMock
 from elephant.brain.feedback import (
     adjust_weights,
     classify_feedback_sentiment,
-    extract_event_features,
+    extract_memory_features,
 )
-from elephant.data.models import Event, NostalgiaWeights, PreferencesFile
+from elephant.data.models import Memory, NostalgiaWeights, PreferencesFile
 from elephant.llm.client import LLMResponse
 
 
-def _make_event(**kwargs):
+def _make_memory(**kwargs):
     defaults = {
         "id": "20260224_test",
         "date": date(2026, 2, 24),
         "title": "Test",
         "type": "daily",
-        "description": "Test event",
+        "description": "Test memory",
         "people": [],
         "source": "WhatsApp",
     }
     defaults.update(kwargs)
-    return Event(**defaults)
+    return Memory(**defaults)
 
 
 class TestClassifySentiment:
@@ -52,27 +52,27 @@ class TestClassifySentiment:
         assert result == "neutral"
 
 
-class TestExtractEventFeatures:
-    def test_milestone_events(self):
-        events = [_make_event(type="milestone", people=["Lily", "Dad"], location="Home")]
-        features = extract_event_features(events)
+class TestExtractMemoryFeatures:
+    def test_milestone_memories(self):
+        memories = [_make_memory(type="milestone", people=["Lily", "Dad"], location="Home")]
+        features = extract_memory_features(memories)
         assert features["has_milestone"] is True
         assert features["has_mundane"] is False
         assert features["avg_people"] == 2.0
         assert features["has_location"] is True
 
-    def test_mixed_events(self):
-        events = [
-            _make_event(type="milestone"),
-            _make_event(type="daily", people=["Lily"]),
+    def test_mixed_memories(self):
+        memories = [
+            _make_memory(type="milestone"),
+            _make_memory(type="daily", people=["Lily"]),
         ]
-        features = extract_event_features(events)
+        features = extract_memory_features(memories)
         assert features["has_milestone"] is True
         assert features["has_mundane"] is True
         assert features["avg_people"] == 0.5
 
-    def test_empty_events(self):
-        features = extract_event_features([])
+    def test_empty_memories(self):
+        features = extract_memory_features([])
         assert features["has_milestone"] is False
         assert features["avg_people"] == 0.0
 

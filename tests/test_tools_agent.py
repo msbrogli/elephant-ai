@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from elephant.data.models import Event
+from elephant.data.models import Memory, Person
 from elephant.data.store import DataStore
 from elephant.git_ops import GitRepo
 from elephant.llm.client import LLMResponse, ToolCall
@@ -46,8 +46,8 @@ class TestConversationalAgent:
         """LLM makes a tool call, gets result, then responds with text."""
         agent, store, llm, git = agent_deps
 
-        # Seed an event
-        store.write_event(Event(
+        # Seed a memory
+        store.write_memory(Memory(
             id="20260224_park_day", date=date(2026, 2, 24), title="Park day",
             type="daily", description="Went to the park with Lily",
             people=["Lily"], source="agent",
@@ -59,14 +59,14 @@ class TestConversationalAgent:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                # First call: LLM wants to search events
+                # First call: LLM wants to search memories
                 return LLMResponse(
                     content=None,
                     model="m",
                     usage={},
                     tool_calls=[ToolCall(
                         id="tc_1",
-                        function_name="list_events",
+                        function_name="list_memories",
                         arguments=json.dumps({"date_from": "2026-02-24", "date_to": "2026-02-24"}),
                     )],
                 )
@@ -85,9 +85,12 @@ class TestConversationalAgent:
         assert "park" in result.lower() or "Lily" in result
         assert call_count == 2
 
-    async def test_create_event_tool_call(self, agent_deps):
-        """LLM calls create_event, then confirms."""
+    async def test_create_memory_tool_call(self, agent_deps):
+        """LLM calls create_memory, then confirms."""
         agent, store, llm, git = agent_deps
+        store.write_person(
+            Person(person_id="lily", display_name="Lily", relationship="daughter"),
+        )
 
         call_count = 0
 
@@ -101,7 +104,7 @@ class TestConversationalAgent:
                     usage={},
                     tool_calls=[ToolCall(
                         id="tc_1",
-                        function_name="create_event",
+                        function_name="create_memory",
                         arguments=json.dumps({
                             "title": "Park day",
                             "date": "2026-02-24",
@@ -124,7 +127,7 @@ class TestConversationalAgent:
 
         result = await agent.handle("We went to the park with Lily", "Telegram")
         assert "park" in result.lower() or "Lily" in result
-        git.auto_commit.assert_called()  # Event was committed
+        git.auto_commit.assert_called()  # Memory was committed
 
     async def test_multiple_tool_calls(self, agent_deps):
         """LLM makes multiple tool calls in sequence."""
@@ -139,8 +142,8 @@ class TestConversationalAgent:
                 return LLMResponse(
                     content=None, model="m", usage={},
                     tool_calls=[
-                        ToolCall(id="tc_1", function_name="get_context", arguments="{}"),
-                        ToolCall(id="tc_2", function_name="list_people", arguments="{}"),
+                        ToolCall(id="tc_1", function_name="list_people", arguments="{}"),
+                        ToolCall(id="tc_2", function_name="list_memories", arguments="{}"),
                     ],
                 )
             else:
@@ -162,7 +165,7 @@ class TestConversationalAgent:
         llm.chat_with_tools = AsyncMock(return_value=LLMResponse(
             content=None, model="m", usage={},
             tool_calls=[ToolCall(
-                id="tc_1", function_name="list_events", arguments="{}",
+                id="tc_1", function_name="list_memories", arguments="{}",
             )],
         ))
         llm.chat = AsyncMock(return_value=LLMResponse(

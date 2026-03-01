@@ -245,9 +245,6 @@ class TelegramPoller:
                 )
                 store.write_authorized_chats(ac)
                 self._router.assign_chat(sender, db)
-                state = store.read_digest_state()
-                updated = state.model_copy(update={"authorized_chat_id": sender})
-                store.write_digest_state(updated)
                 logger.info("Chat %s auto-approved (bootstrap) for db %s", sender, db.name)
                 await self._reply(sender, "Authenticated!")
             else:

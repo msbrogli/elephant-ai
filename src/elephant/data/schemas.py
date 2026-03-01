@@ -1,8 +1,8 @@
 """Raw YAML schema content as constants, sourced from DESIGN.md."""
 
-EVENTS_SCHEMA = """\
+MEMORIES_SCHEMA = """\
 version: 1
-description: "Each file represents one memory event. Filename: {YYYYMMDD}_{slug}.yaml"
+description: "Each file represents one memory. Filename: {YYYYMMDD}_{slug}.yaml"
 fields:
   id:
     type: string
@@ -11,11 +11,11 @@ fields:
   date:
     type: date
     required: true
-    description: "Event date in YYYY-MM-DD format"
+    description: "Memory date in YYYY-MM-DD format"
   time:
     type: string
     required: false
-    description: "Event time in HH:MM format (24h). Omit if unknown."
+    description: "Memory time in HH:MM format (24h). Omit if unknown."
   title:
     type: string
     required: true
@@ -24,7 +24,7 @@ fields:
     type: string
     required: true
     enum: [milestone, daily, outing, celebration, health, travel, mundane, other]
-    description: "Event category"
+    description: "Memory category"
   description:
     type: string
     required: true
@@ -52,7 +52,7 @@ fields:
     type: string
     required: true
     enum: [WhatsApp, Telegram, evening_checkin, morning_digest, manual, photo_ingest]
-    description: "How this event was captured"
+    description: "How this memory was captured"
   nostalgia_score:
     type: float
     required: false
@@ -63,6 +63,28 @@ fields:
     required: false
     default: []
     description: "Freeform tags for filtering"
+  content:
+    type: string
+    required: false
+    description: "Full narrative prose"
+  participants:
+    type: list[string]
+    required: false
+    default: []
+    description: "person_ids of people involved"
+  metadata:
+    type: object
+    required: false
+    description: "5Ws+H extracted by AI"
+  interaction:
+    type: object
+    required: false
+    description: "Conversation trail for this memory"
+  media_refs:
+    type: list[string]
+    required: false
+    default: []
+    description: "Photo/video references"
 """
 
 PHOTO_INDEX_SCHEMA = """\
@@ -106,7 +128,7 @@ fields:
     type: list[string]
     required: false
     default: []
-    description: "person_id values from people.yaml matched via face recognition"
+    description: "person_id values matched via face recognition"
   camera:
     type: object
     required: false
@@ -118,10 +140,10 @@ fields:
       model:
         type: string
         description: "Camera model"
-  event_id:
+  memory_id:
     type: string
     required: false
-    description: "Linked event ID if auto-matched or manually linked"
+    description: "Linked memory ID if auto-matched or manually linked"
 """
 
 VIDEO_INDEX_SCHEMA = """\
@@ -176,44 +198,10 @@ fields:
     type: string
     required: false
     description: "Relative path to auto-generated thumbnail image"
-  event_id:
+  memory_id:
     type: string
     required: false
-    description: "Linked event ID"
-"""
-
-PEOPLE_SCHEMA = """\
-_schema:
-  version: 1
-  description: "List of known people. Used for face matching and display names."
-  fields:
-    person_id:
-      type: string
-      required: true
-      description: "Stable identifier (e.g. 'daughter', 'cousin_lucas')"
-    display_name:
-      type: string
-      required: true
-      description: "Human-readable name shown in digests and logs"
-    relationship:
-      type: string
-      required: true
-      description: "Relationship to the user (e.g. 'child', 'spouse', 'friend', 'cousin')"
-    birthday:
-      type: date
-      required: false
-      description: "Birthday in YYYY-MM-DD format"
-    face_clusters:
-      type: list[string]
-      required: false
-      default: []
-      description: "Face cluster IDs from recognition system"
-    notes:
-      type: string
-      required: false
-      description: "Freeform notes about this person"
-
-people: []
+    description: "Linked memory ID"
 """
 
 PEOPLE_DIR_SCHEMA = """\
@@ -269,6 +257,25 @@ fields:
       description:
         type: string
         description: "What happened (e.g. 'got engaged', 'wedding', 'moved to Austin')"
+  current_threads:
+    type: list[object]
+    required: false
+    default: []
+    description: "Active topics for this person"
+    fields:
+      topic:
+        type: string
+        description: "Topic of the thread"
+      latest_update:
+        type: string
+        description: "Most recent update"
+      last_mentioned_date:
+        type: date
+        description: "When this thread was last mentioned"
+  interaction_frequency_target:
+    type: integer
+    required: false
+    description: "Target days between contacts"
   face_clusters:
     type: list[string]
     required: false
@@ -280,36 +287,6 @@ fields:
     description: "Freeform notes about this person"
 """
 
-CONTEXT_SCHEMA = """\
-_schema:
-  version: 1
-  description: "Family context loaded into every LLM prompt. Keep concise."
-  sections:
-    family.members:
-      description: "Core family members"
-      fields:
-        name: "string"
-        role: "string"
-        birthday: "date?"
-        employer: "string?"
-    friends:
-      description: "Close friends and their context"
-      fields:
-        name: "string"
-        relationship: "string"
-        met_at: "string?"
-    locations:
-      description: "Key locations as name -> address/description"
-    notes:
-      description: "Freeform facts the LLM should know"
-
-family:
-  members: []
-friends: []
-locations: {}
-notes: []
-"""
-
 PREFERENCES_SCHEMA = """\
 _schema:
   version: 1
@@ -317,20 +294,29 @@ _schema:
   fields:
     nostalgia_weights:
       type: object
-      description: "Multipliers for event scoring in morning digest"
+      description: "Multipliers for memory scoring in morning digest"
       fields:
-        milestones: {type: float, default: 1.0, description: "Weight for milestone events"}
+        milestones: {type: float, default: 1.0, description: "Weight for milestone memories"}
         mundane_daily: {type: float, default: 1.0, description: "Weight for everyday moments"}
-        people_focus: {type: float, default: 1.0, description: "Boost for events with many people"}
+        people_focus:
+          type: float
+          default: 1.0
+          description: "Boost for memories with many people"
         location_focus:
           type: float
           default: 1.0
-          description: "Boost for events at special places"
+          description: "Boost for memories at special places"
     tone_preference:
       type: object
       fields:
         style: {type: string, enum: [heartfelt, playful, factual], default: heartfelt}
         length: {type: string, enum: [short, medium, long], default: short}
+    locations:
+      type: object
+      description: "Known locations as name -> description"
+    notes:
+      type: list[string]
+      description: "Freeform facts the system should know"
 
 nostalgia_weights:
   milestones: 1.0
@@ -340,6 +326,8 @@ nostalgia_weights:
 tone_preference:
   style: heartfelt
   length: short
+locations: {}
+notes: []
 """
 
 DIGEST_STATE_SCHEMA = """\
@@ -351,24 +339,19 @@ _schema:
       type: datetime
       required: false
       description: "ISO 8601 timestamp of when the last digest was sent"
-    last_digest_event_ids:
+    last_digest_memory_ids:
       type: list[string]
       required: false
       default: []
-      description: "Event IDs included in the last digest"
+      description: "Memory IDs included in the last digest"
     last_digest_message_id:
       type: string
       required: false
       description: "Message ID of the last digest sent (for reply tracking)"
-    authorized_chat_id:
-      type: string
-      required: false
-      description: "Telegram chat ID authorized via /start command"
 
 last_digest_sent_at: null
-last_digest_event_ids: []
+last_digest_memory_ids: []
 last_digest_message_id: null
-authorized_chat_id: null
 """
 
 AUTHORIZED_CHATS_SCHEMA = """\
@@ -392,12 +375,12 @@ _schema:
     type:
       type: string
       required: true
-      enum: [person_identification, event_enrichment, context_gap, media_linking]
+      enum: [person_identification, memory_enrichment, context_gap, media_linking]
       description: "Category of clarification needed"
     subject:
       type: string
       required: true
-      description: "Reference to what needs clarification (cluster ID, event ID, etc.)"
+      description: "Reference to what needs clarification (cluster ID, memory ID, etc.)"
     question:
       type: string
       required: false
@@ -421,9 +404,17 @@ _schema:
 questions: []
 """
 
+CHAT_HISTORY_SCHEMA = """\
+_schema:
+  version: 1
+  description: "Conversation history between the user and the assistant."
+
+entries: []
+"""
+
 # Mapping of directory schema files to their content
 DIR_SCHEMAS: dict[str, str] = {
-    "events/_schema.yaml": EVENTS_SCHEMA,
+    "memories/_schema.yaml": MEMORIES_SCHEMA,
     "photo_index/_schema.yaml": PHOTO_INDEX_SCHEMA,
     "video_index/_schema.yaml": VIDEO_INDEX_SCHEMA,
     "people/_schema.yaml": PEOPLE_DIR_SCHEMA,
@@ -431,9 +422,9 @@ DIR_SCHEMAS: dict[str, str] = {
 
 # Mapping of single-file stores to their initial content (includes _schema block)
 SINGLE_FILE_SCHEMAS: dict[str, str] = {
-    "context.yaml": CONTEXT_SCHEMA,
     "preferences.yaml": PREFERENCES_SCHEMA,
     "pending_questions.yaml": PENDING_QUESTIONS_SCHEMA,
     "digest_state.yaml": DIGEST_STATE_SCHEMA,
     "authorized_chats.yaml": AUTHORIZED_CHATS_SCHEMA,
+    "chat_history.yaml": CHAT_HISTORY_SCHEMA,
 }

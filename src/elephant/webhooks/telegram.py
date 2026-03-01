@@ -252,10 +252,6 @@ def create_telegram_webhook(
                 )
                 store.write_authorized_chats(ac)
                 router.assign_chat(sender, db)
-                # Also write legacy field for backward compat
-                state = store.read_digest_state()
-                updated = state.model_copy(update={"authorized_chat_id": sender})
-                store.write_digest_state(updated)
                 logger.info("Chat %s auto-approved (bootstrap) for db %s", sender, db.name)
                 await _reply(
                     request, request.app[bot_token_key], sender, "Authenticated!"

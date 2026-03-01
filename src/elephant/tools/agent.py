@@ -29,25 +29,33 @@ class ConversationalAgent:
         llm: LLMClient,
         model: str,
         git: GitRepo,
+        history_limit: int = 500,
     ) -> None:
         self._store = store
         self._llm = llm
         self._model = model
         self._executor = ToolExecutor(store, git, llm, model)
+        self._history_limit = history_limit
 
     async def handle(
         self,
         user_message: str,
         source: str,
         attachments: list[Any] | None = None,
+        message_id: str | None = None,
     ) -> str:
         """Process a user message through the tool-calling loop. Returns the final text."""
-        context = self._store.read_context()
+        self._executor.set_message_context(message_id=message_id)
         people = self._store.read_all_people()
-        people_names = [p.display_name for p in people]
+        prefs = self._store.read_preferences()
         today = date.today().isoformat()
 
-        system_prompt = conversational_system_prompt(context, people_names, today)
+        last_contacts = self._store.get_latest_memory_dates_for_people(
+            [p.display_name for p in people],
+        )
+        system_prompt = conversational_system_prompt(
+            people, prefs, today, last_contacts=last_contacts,
+        )
 
         # Build user content
         user_content = user_message
@@ -59,8 +67,14 @@ class ConversationalAgent:
 
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_content},
         ]
+
+        # Inject conversation history
+        history = self._store.read_chat_history()
+        for entry in history.entries[-self._history_limit :]:
+            messages.append({"role": entry.role, "content": entry.content})
+
+        messages.append({"role": "user", "content": user_content})
 
         for _round in range(self.MAX_TOOL_ROUNDS):
             response = await self._llm.chat_with_tools(
@@ -73,7 +87,9 @@ class ConversationalAgent:
 
             if not response.tool_calls:
                 # LLM returned a text response — we're done
-                return response.content or "Done!"
+                final_text = response.content or "Done!"
+                self._store.append_chat_history(user_content, final_text)
+                return final_text
 
             # Append assistant message with tool calls
             assistant_msg: dict[str, Any] = {
@@ -106,4 +122,6 @@ class ConversationalAgent:
 
         # Safety: if we hit max rounds, get a final response without tools
         response = await self._llm.chat(messages, model=self._model)
-        return response.content or "Done!"
+        final_text = response.content or "Done!"
+        self._store.append_chat_history(user_content, final_text)
+        return final_text

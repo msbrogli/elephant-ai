@@ -1,21 +1,25 @@
-"""Parse user answers to update context.yaml and people.yaml."""
+"""Process context updates by routing to Person files and preferences.
+
+This module replaces the old context.yaml-based enrichment.
+Updates are now routed to individual Person files and preferences.yaml.
+"""
+
+from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
 
-from elephant.data.store import DataStore
-from elephant.git_ops import GitRepo
-from elephant.llm.client import LLMClient
-from elephant.llm.prompts import enrich_context
+if TYPE_CHECKING:
+    from elephant.data.models import Person, PreferencesFile
+    from elephant.data.store import DataStore
+    from elephant.git_ops import GitRepo
+    from elephant.llm.client import LLMClient
 
 logger = logging.getLogger(__name__)
 
 # Accept both singular and plural key variants from LLM responses.
-_FAMILY_KEYS = {"family_member", "family_members"}
-_FRIEND_KEYS = {"friend", "friends"}
 _LOCATION_KEYS = {"location", "locations"}
 _NOTE_KEYS = {"note", "notes"}
 _PERSON_UPDATE_KEYS = {"person_update", "person_updates"}
@@ -44,11 +48,32 @@ async def process_context_update(
     store: DataStore,
     git: GitRepo,
 ) -> bool:
-    """Process a context update message from the user."""
-    now = datetime.now(UTC)
-    now_str = now.strftime("%Y-%m-%d %H:%M UTC")
-    current_context = store.read_context()
-    messages = enrich_context(text, current_context, now=now_str)
+    """Process a context update message from the user.
+
+    Routes updates to:
+    - Person files (for people/family/friend updates)
+    - preferences.yaml locations and notes (for location/note updates)
+    """
+    people = store.read_all_people()
+    prefs = store.read_preferences()
+
+    # Use LLM to extract structured updates from the text
+    context_str = _build_update_context(people, prefs)
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are a family context assistant. Extract structured updates from "
+                "the user's message. Respond ONLY with valid YAML (no markdown fencing).\n\n"
+                "Possible update types:\n"
+                "  location: {name: str, description: str}\n"
+                "  note: string\n"
+                "  person_update: {name: str, field: str, value: any}\n\n"
+                f"Current context:\n{context_str}"
+            ),
+        },
+        {"role": "user", "content": text},
+    ]
     response = await llm.chat(messages, model=model, temperature=0.3)
 
     try:
@@ -63,38 +88,27 @@ async def process_context_update(
 
     changed = False
 
-    # Handle family member updates
-    for member in _get_values(updates, _FAMILY_KEYS):
-        if isinstance(member, dict) and "name" in member:
-            changed |= _add_family_member(current_context, member)
-
-    # Handle friend updates
-    for friend in _get_values(updates, _FRIEND_KEYS):
-        if isinstance(friend, dict) and "name" in friend:
-            changed |= _add_friend(current_context, friend)
-
-    # Handle location updates
+    # Handle location updates → preferences.yaml
     for loc in _get_values(updates, _LOCATION_KEYS):
         if isinstance(loc, dict) and "name" in loc:
-            locations = current_context.setdefault("locations", {})
-            locations[loc["name"]] = loc.get("description", "")
+            prefs.locations[loc["name"]] = loc.get("description", "")
             changed = True
 
-    # Handle note updates
-    today = now.strftime("%Y-%m-%d")
+    # Handle note updates → preferences.yaml
     for note in _get_values(updates, _NOTE_KEYS):
         if note:
-            notes = current_context.setdefault("notes", [])
-            notes.append({"text": str(note), "date": today})
+            prefs.notes.append(str(note))
             changed = True
 
-    # Handle person updates (update existing person info)
+    if changed:
+        store.write_preferences(prefs)
+
+    # Handle person updates → individual Person files
     for pu in _get_values(updates, _PERSON_UPDATE_KEYS):
         if isinstance(pu, dict) and "name" in pu:
             changed |= _update_person(store, pu)
 
     if changed:
-        store.write_context(current_context)
         git.auto_commit("context", "Context update from user")
         logger.info("Context updated from user message")
     else:
@@ -103,28 +117,18 @@ async def process_context_update(
     return changed
 
 
-def _add_family_member(context: dict[str, Any], member: dict[str, Any]) -> bool:
-    """Add a family member to context."""
-    family = context.setdefault("family", {})
-    members = family.setdefault("members", [])
-    # Check if already exists
-    for existing in members:
-        if existing.get("name") == member["name"]:
-            existing.update(member)
-            return True
-    members.append(member)
-    return True
-
-
-def _add_friend(context: dict[str, Any], friend: dict[str, Any]) -> bool:
-    """Add a friend to context."""
-    friends = context.setdefault("friends", [])
-    for existing in friends:
-        if existing.get("name") == friend["name"]:
-            existing.update(friend)
-            return True
-    friends.append(friend)
-    return True
+def _build_update_context(people: list[Person], prefs: PreferencesFile) -> str:
+    """Build context string for the update extraction prompt."""
+    parts: list[str] = []
+    if people:
+        names = [f"{p.display_name} ({p.relationship})" for p in people]
+        parts.append(f"People: {', '.join(names)}")
+    if prefs.locations:
+        locs = [f"{k}: {v}" for k, v in prefs.locations.items()]
+        parts.append(f"Locations: {', '.join(locs)}")
+    if prefs.notes:
+        parts.append(f"Notes: {'; '.join(prefs.notes)}")
+    return "\n".join(parts) if parts else "(no context available)"
 
 
 def _update_person(store: DataStore, update: dict[str, Any]) -> bool:

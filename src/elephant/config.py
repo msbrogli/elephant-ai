@@ -53,6 +53,7 @@ class DatabaseConfig:
     data_dir: str
     auth_secret: str
     schedule: ScheduleConfig = ScheduleConfig()
+    chat_history_limit: int = 500
 
 
 @dataclass(frozen=True)
@@ -117,6 +118,7 @@ def load_config(path: str | None = None) -> AppConfig:
                 data_dir=db_data["data_dir"],
                 auth_secret=db_data["auth_secret"],
                 schedule=db_schedule,
+                chat_history_limit=db_data.get("chat_history_limit", 500),
             )
         )
 
