@@ -78,6 +78,7 @@ class Memory(BaseModel):
     interaction: InteractionRecord | None = None
     media_refs: list[str] = Field(default_factory=list)
     corrections: list[Correction] = Field(default_factory=list)
+    attributes: dict[str, str] = Field(default_factory=dict)
 
     def resolved_value(self, field_name: str) -> Any:
         """Return the latest corrected value for a field, or the original."""
@@ -181,6 +182,7 @@ class Person(BaseModel):
     archived_threads: list[CurrentThread] = Field(default_factory=list)
     interaction_frequency_target: int | None = None
     preferences: PersonPreferences | None = None
+    attributes: dict[str, str] = Field(default_factory=dict)
 
 
 # --- Preferences ---

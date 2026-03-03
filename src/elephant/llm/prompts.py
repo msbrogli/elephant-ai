@@ -15,8 +15,14 @@ def _build_context_str(
     """Build context string from Person summaries + preferences."""
     parts: list[str] = []
     if people:
-        names = [f"{p.display_name} ({', '.join(p.relationship)})" for p in people]
-        parts.append(f"People: {', '.join(names)}")
+        entries: list[str] = []
+        for p in people:
+            entry = f"{p.display_name} ({', '.join(p.relationship)})"
+            if p.attributes:
+                attrs = ", ".join(f"{k}: {v}" for k, v in p.attributes.items())
+                entry += f" [{attrs}]"
+            entries.append(entry)
+        parts.append(f"People: {', '.join(entries)}")
     if prefs.locations:
         parts.append(f"Locations: {', '.join(prefs.locations.keys())}")
     if prefs.notes:
@@ -121,12 +127,19 @@ def morning_digest(
 ) -> list[dict[str, str]]:
     """Prompt to generate a morning digest story."""
     context_str = _build_context_str(people, prefs)
-    memories_str = "\n---\n".join(
-        f"Date: {e.get('date')}\nTitle: {e.get('title')}\n"
-        f"Description: {e.get('description')}\nPeople: {e.get('people')}\n"
-        f"Location: {e.get('location', 'N/A')}"
-        for e in memories
-    )
+    def _format_memory(e: dict[str, Any]) -> str:
+        lines = (
+            f"Date: {e.get('date')}\nTitle: {e.get('title')}\n"
+            f"Description: {e.get('description')}\nPeople: {e.get('people')}\n"
+            f"Location: {e.get('location', 'N/A')}"
+        )
+        attrs = e.get("attributes")
+        if attrs:
+            attr_str = ", ".join(f"{k}: {v}" for k, v in attrs.items())
+            lines += f"\nContext: {attr_str}"
+        return lines
+
+    memories_str = "\n---\n".join(_format_memory(e) for e in memories)
 
     birthday_section = ""
     if birthdays:
@@ -438,7 +451,13 @@ def conversational_system_prompt(
         "at the end. If the user shared information that should be stored, "
         "you MUST call the appropriate tool — never just promise to do it. "
         "Call the tool FIRST, then confirm. Phrases like 'I've tucked that "
-        "away' are ONLY permitted after a successful tool call.\n\n"
+        "away' are ONLY permitted after a successful tool call.\n"
+        "12. **Dynamic Attributes**: When creating or updating a memory, "
+        "proactively set `attributes` to capture rich contextual details "
+        "that don't fit standard fields. Examples: mood, weather, season, "
+        "occasion, milestone_type for memories; hobby, allergy, school for "
+        "people. Use snake_case keys and string values. Be selective — only "
+        "add attributes that are clearly present or implied in the message.\n\n"
         "### TONE & STYLE\n"
         "- **Concise Warmth**: Be brief but soulful. Use names "
         "(e.g., 'I've tucked that away for Lily').\n"

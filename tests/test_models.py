@@ -64,6 +64,33 @@ class TestMemory:
         assert m.metadata is not None
         assert m.metadata.who == ["Lily", "Dad"]
 
+    def test_attributes_default_empty(self):
+        m = Memory(
+            id="20260301_test",
+            date=date(2026, 3, 1),
+            title="Test",
+            type="daily",
+            description="A test",
+            people=["Dad"],
+            source="agent",
+        )
+        assert m.attributes == {}
+
+    def test_attributes_construction(self):
+        m = Memory(
+            id="20260301_bike_ride",
+            date=date(2026, 3, 1),
+            title="First bike ride",
+            type="milestone",
+            description="Nicholas rode his bike for the first time in the rain",
+            people=["Nicholas"],
+            source="agent",
+            attributes={"mood": "excited", "weather": "rainy", "first_time": "true"},
+        )
+        assert m.attributes["mood"] == "excited"
+        assert m.attributes["weather"] == "rainy"
+        assert m.attributes["first_time"] == "true"
+
     def test_memory_missing_required(self):
         with pytest.raises(ValidationError):
             Memory(id="test", date=date(2026, 1, 1), title="t", type="daily")  # type: ignore[call-arg]
@@ -121,6 +148,17 @@ class TestPeople:
         assert p.archived_threads == []
         assert p.interaction_frequency_target is None
         assert p.preferences is None
+        assert p.attributes == {}
+
+    def test_person_attributes(self):
+        p = Person(
+            person_id="kid_nick",
+            display_name="Nicholas",
+            relationship=["son"],
+            attributes={"hobby": "soccer", "school": "Lincoln Elementary"},
+        )
+        assert p.attributes["hobby"] == "soccer"
+        assert p.attributes["school"] == "Lincoln Elementary"
 
     def test_groups(self):
         p = Person(

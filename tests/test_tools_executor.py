@@ -123,6 +123,56 @@ class TestCreateMemory:
         assert memory.title == "Park day"
 
 
+class TestCreateMemoryAttributes:
+    async def test_create_with_attributes(self, executor):
+        ex, store, git, llm = executor
+        store.write_person(
+            Person(person_id="nick", display_name="Nicholas", relationship=["son"]),
+        )
+
+        tc = ToolCall(
+            id="1", function_name="create_memory",
+            arguments=json.dumps({
+                "title": "First bike ride",
+                "date": "2026-03-01",
+                "type": "milestone",
+                "description": "Nicholas rode his bike for the first time in the rain",
+                "people": ["Nicholas"],
+                "attributes": {"mood": "excited", "weather": "rainy", "first_time": "true"},
+            }),
+        )
+        result = json.loads(await ex.execute(tc))
+        assert "created" in result
+
+        memory = store.find_memory_by_id(result["created"])
+        assert memory is not None
+        assert memory.attributes["mood"] == "excited"
+        assert memory.attributes["weather"] == "rainy"
+
+    async def test_create_without_attributes(self, executor):
+        ex, store, git, llm = executor
+        store.write_person(
+            Person(person_id="lily", display_name="Lily", relationship=["daughter"]),
+        )
+
+        tc = ToolCall(
+            id="1", function_name="create_memory",
+            arguments=json.dumps({
+                "title": "Park day",
+                "date": "2026-03-01",
+                "type": "daily",
+                "description": "Went to the park",
+                "people": ["Lily"],
+            }),
+        )
+        result = json.loads(await ex.execute(tc))
+        assert "created" in result
+
+        memory = store.find_memory_by_id(result["created"])
+        assert memory is not None
+        assert memory.attributes == {}
+
+
 class TestUpdateMemory:
     async def test_updates_same_day_memory(self, executor):
         from datetime import date as _date
@@ -179,6 +229,66 @@ class TestUpdateMemory:
         assert memory.corrections[0].reason == "More detail recalled"
         # resolved_value returns corrected value
         assert memory.resolved_value("description") == "Had a great time at the park!"
+
+
+class TestUpdateMemoryAttributes:
+    async def test_merge_attributes_same_day(self, executor):
+        from datetime import date as _date
+
+        ex, store, git, llm = executor
+        today = _date.today()
+        mem_id = f"{today.strftime('%Y%m%d')}_bike_ride"
+        store.write_memory(Memory(
+            id=mem_id, date=today, title="Bike ride",
+            type="daily", description="Rode bikes", people=["Nicholas"],
+            source="agent", attributes={"mood": "happy", "weather": "sunny"},
+        ))
+
+        tc = ToolCall(
+            id="1", function_name="update_memory",
+            arguments=json.dumps({
+                "memory_id": mem_id,
+                "attributes": {"weather": "rainy", "season": "spring"},
+            }),
+        )
+        result = json.loads(await ex.execute(tc))
+        assert result["updated"] == mem_id
+
+        memory = store.find_memory_by_id(mem_id)
+        assert memory is not None
+        # Existing key overwritten
+        assert memory.attributes["weather"] == "rainy"
+        # New key added
+        assert memory.attributes["season"] == "spring"
+        # Missing key preserved
+        assert memory.attributes["mood"] == "happy"
+
+    async def test_merge_attributes_past_memory(self, executor):
+        """Attributes on past memories are merged directly (not corrections)."""
+        ex, store, git, llm = executor
+        store.write_memory(Memory(
+            id="20260224_bike", date=date(2026, 2, 24), title="Bike ride",
+            type="daily", description="Rode bikes", people=["Nicholas"],
+            source="agent", attributes={"mood": "happy"},
+        ))
+
+        tc = ToolCall(
+            id="1", function_name="update_memory",
+            arguments=json.dumps({
+                "memory_id": "20260224_bike",
+                "attributes": {"weather": "rainy"},
+            }),
+        )
+        result = json.loads(await ex.execute(tc))
+        assert result["corrected"] == "20260224_bike"
+
+        memory = store.find_memory_by_id("20260224_bike")
+        assert memory is not None
+        # Attributes merged directly, not via corrections
+        assert memory.attributes["mood"] == "happy"
+        assert memory.attributes["weather"] == "rainy"
+        # No corrections for attributes
+        assert len(memory.corrections) == 0
 
 
 class TestDeleteMemory:
@@ -372,6 +482,34 @@ class TestUpdatePerson:
         assert person is not None
         assert len(person.current_threads) == 1
         assert person.current_threads[0].topic == "Job search"
+
+    async def test_merge_attributes(self, executor):
+        ex, store, git, llm = executor
+        store.write_person(
+            Person(
+                person_id="nick", display_name="Nicholas", relationship=["son"],
+                attributes={"hobby": "soccer", "school": "Lincoln Elementary"},
+            ),
+        )
+
+        tc = ToolCall(
+            id="1", function_name="update_person",
+            arguments=json.dumps({
+                "person_id": "nick",
+                "attributes": {"hobby": "basketball", "allergy": "peanuts"},
+            }),
+        )
+        result = json.loads(await ex.execute(tc))
+        assert result["updated"] == "nick"
+
+        person = store.read_person("nick")
+        assert person is not None
+        # Existing key overwritten
+        assert person.attributes["hobby"] == "basketball"
+        # New key added
+        assert person.attributes["allergy"] == "peanuts"
+        # Missing key preserved
+        assert person.attributes["school"] == "Lincoln Elementary"
 
     async def test_not_found(self, executor):
         ex, store, git, llm = executor

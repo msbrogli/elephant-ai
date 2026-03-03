@@ -85,6 +85,13 @@ fields:
     required: false
     default: []
     description: "Photo/video references"
+  attributes:
+    type: object
+    required: false
+    default: {}
+    description: >-
+      Flexible key-value metadata (e.g. mood, weather, occasion).
+      Snake_case keys, string values.
 """
 
 PHOTO_INDEX_SCHEMA = """\
@@ -285,6 +292,13 @@ fields:
     type: string
     required: false
     description: "Freeform notes about this person"
+  attributes:
+    type: object
+    required: false
+    default: {}
+    description: >-
+      Flexible key-value metadata (e.g. hobby, allergy, school).
+      Snake_case keys, string values.
 """
 
 GROUPS_DIR_SCHEMA = """\

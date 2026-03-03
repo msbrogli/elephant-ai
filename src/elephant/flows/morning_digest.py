@@ -155,6 +155,7 @@ class MorningDigestFlow:
                 "description": m.resolved_value("description"),
                 "people": m.resolved_value("people"),
                 "location": m.resolved_value("location"),
+                "attributes": m.attributes,
             }
             for m in top_memories
         ]

@@ -205,6 +205,7 @@ class ToolExecutor:
             tags=args.get("tags", []),
             content=args.get("content"),
             participants=args.get("participants", []),
+            attributes=args.get("attributes", {}),
         )
 
         # Check for unknown people before writing
@@ -251,6 +252,7 @@ class ToolExecutor:
 
         memory_id = args.pop("memory_id")
         reason = args.pop("reason", None)
+        new_attributes = args.pop("attributes", None)
         allowed = {"title", "description", "people", "location", "tags", "time", "type",
                     "nostalgia_score", "content", "participants"}
         updates = {k: v for k, v in args.items() if k in allowed}
@@ -259,8 +261,15 @@ class ToolExecutor:
         if memory is None:
             return {"error": f"Memory not found: {memory_id}"}
 
+        # Merge attributes (not a correction — metadata enrichment)
+        if new_attributes:
+            merged_attrs = {**memory.attributes, **new_attributes}
+            updates["attributes"] = merged_attrs
+
         if memory.date < date.today():
             # Past memory: append corrections instead of overwriting
+            # Attributes are metadata enrichment, not factual corrections
+            attr_update = updates.pop("attributes", None)
             corrections = list(memory.corrections)
             for field, new_val in updates.items():
                 old_val = getattr(memory, field, None)
@@ -271,7 +280,10 @@ class ToolExecutor:
                     new_value=str(new_val) if new_val is not None else None,
                     reason=reason,
                 ))
-            updated = memory.model_copy(update={"corrections": corrections})
+            correction_updates: dict[str, Any] = {"corrections": corrections}
+            if attr_update is not None:
+                correction_updates["attributes"] = attr_update
+            updated = memory.model_copy(update=correction_updates)
             path = self._store.write_memory(updated)
             self._git.auto_commit(
                 "memory", f"Corrected {memory.title}", timestamp=memory.date, paths=[path],
@@ -448,11 +460,14 @@ class ToolExecutor:
                 display_name=display_name,
                 relationship=raw_rel,
             )
+        new_attributes = args.pop("attributes", None)
         allowed = {
             "display_name", "relationship", "birthday", "groups",
             "other_names", "notes", "interaction_frequency_target",
         }
         updates: dict[str, Any] = {k: v for k, v in args.items() if k in allowed}
+        if new_attributes:
+            updates["attributes"] = {**person.attributes, **new_attributes}
         if "relationship" in updates and isinstance(updates["relationship"], str):
             updates["relationship"] = [updates["relationship"]]
         if "birthday" in updates and isinstance(updates["birthday"], str):
@@ -640,7 +655,7 @@ def _parse_date(value: str | None) -> date | None:
 
 
 def _memory_summary(memory: Memory) -> dict[str, Any]:
-    return {
+    summary: dict[str, Any] = {
         "id": memory.id,
         "date": str(memory.date),
         "title": memory.title,
@@ -649,3 +664,6 @@ def _memory_summary(memory: Memory) -> dict[str, Any]:
         "people": memory.people,
         "location": memory.location,
     }
+    if memory.attributes:
+        summary["attributes"] = memory.attributes
+    return summary

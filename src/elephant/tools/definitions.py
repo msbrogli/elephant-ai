@@ -164,6 +164,15 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                             "Only use after confirming with the user."
                         ),
                     },
+                    "attributes": {
+                        "type": "object",
+                        "additionalProperties": {"type": "string"},
+                        "description": (
+                            "Flexible key-value metadata for the memory "
+                            "(e.g. mood, weather, season, occasion, milestone_type). "
+                            "Use snake_case keys with string values."
+                        ),
+                    },
                 },
                 "required": ["title", "date", "type", "description", "people"],
             },
@@ -196,6 +205,15 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                         "type": "string",
                         "description": (
                             "Reason for the update (required when updating past memories)"
+                        ),
+                    },
+                    "attributes": {
+                        "type": "object",
+                        "additionalProperties": {"type": "string"},
+                        "description": (
+                            "Flexible key-value metadata to merge into the memory. "
+                            "New keys are added, existing keys are overwritten, "
+                            "missing keys are preserved."
                         ),
                     },
                 },
@@ -365,6 +383,16 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                         "description": (
                             "Set to true to force-update canonical fields "
                             "(birthday, relationship, display_name) even if they differ."
+                        ),
+                    },
+                    "attributes": {
+                        "type": "object",
+                        "additionalProperties": {"type": "string"},
+                        "description": (
+                            "Flexible key-value metadata to merge into the person "
+                            "(e.g. hobby, allergy, school). "
+                            "New keys are added, existing keys are overwritten, "
+                            "missing keys are preserved."
                         ),
                     },
                 },
