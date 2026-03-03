@@ -13,8 +13,8 @@ from elephant.llm.prompts import (
 )
 
 SAMPLE_PEOPLE = [
-    Person(person_id="lily", display_name="Lily", relationship="daughter"),
-    Person(person_id="rafael", display_name="Rafael", relationship="friend"),
+    Person(person_id="lily", display_name="Lily", relationship=["daughter"]),
+    Person(person_id="rafael", display_name="Rafael", relationship=["friend"]),
 ]
 
 SAMPLE_PREFS = PreferencesFile(

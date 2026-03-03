@@ -366,9 +366,9 @@ _schema:
       required: true
       description: "Human-readable name shown in digests and logs"
     relationship:
-      type: string
+      type: list[string]
       required: true
-      description: "Relationship to the user (e.g. 'child', 'spouse', 'friend', 'cousin')"
+      description: "Relationships to the user (e.g. ['child'], ['nephew', 'godson'])"
     birthday:
       type: date
       required: false
@@ -386,12 +386,12 @@ _schema:
 people:
   - person_id: daughter
     display_name: "Lily"
-    relationship: "child"
+    relationship: ["child"]
     birthday: "2023-01-10"
     face_clusters: ["c_001", "c_042"]
   - person_id: cousin_rafael
     display_name: "Rafael"
-    relationship: "cousin"
+    relationship: ["cousin"]
     notes: "Visiting from Brazil"
 ```
 

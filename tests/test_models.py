@@ -106,15 +106,15 @@ class TestPeople:
         p = Person(
             person_id="daughter",
             display_name="Lily",
-            relationship="child",
+            relationship=["child"],
             birthday=date(2023, 1, 10),
             face_clusters=["c_001", "c_042"],
         )
         assert p.display_name == "Lily"
 
     def test_person_defaults(self):
-        p = Person(person_id="test", display_name="Test", relationship="friend")
-        assert p.close_friend is False
+        p = Person(person_id="test", display_name="Test", relationship=["friend"])
+        assert p.groups == []
         assert p.relationships == []
         assert p.life_events == []
         assert p.current_threads == []
@@ -122,20 +122,20 @@ class TestPeople:
         assert p.interaction_frequency_target is None
         assert p.preferences is None
 
-    def test_close_friend(self):
+    def test_groups(self):
         p = Person(
             person_id="friend_theo",
             display_name="Theo",
-            relationship="friend",
-            close_friend=True,
+            relationship=["friend"],
+            groups=["close-friends", "bjj"],
         )
-        assert p.close_friend is True
+        assert p.groups == ["close-friends", "bjj"]
 
     def test_relationships(self):
         p = Person(
             person_id="friend_theo",
             display_name="Theo",
-            relationship="friend",
+            relationship=["friend"],
             relationships=[
                 PersonRelationship(person_id="friend_felix", label="brother"),
             ],
@@ -147,7 +147,7 @@ class TestPeople:
         p = Person(
             person_id="friend_theo",
             display_name="Theo",
-            relationship="friend",
+            relationship=["friend"],
             life_events=[
                 LifeEvent(date=date(2026, 6, 15), description="got engaged"),
                 LifeEvent(date=date(2027, 3, 1), description="wedding"),
@@ -160,7 +160,7 @@ class TestPeople:
         p = Person(
             person_id="friend_theo",
             display_name="Theo",
-            relationship="friend",
+            relationship=["friend"],
             current_threads=[
                 CurrentThread(
                     topic="Job search",

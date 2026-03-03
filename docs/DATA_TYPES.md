@@ -46,7 +46,7 @@ One file per person: `people/{person_id}.yaml`.
 | `display_name` | string | yes | Name shown in digests and logs |
 | `relationship` | string | yes | Relationship to user (e.g. `child`, `spouse`, `friend`) |
 | `birthday` | date | no | Birthday (`YYYY-MM-DD`) |
-| `close_friend` | bool | no | Close friends get earlier birthday reminders (21 days vs day-of) |
+| `groups` | list[string] | no | Group IDs this person belongs to (e.g. `["close-friends", "bjj"]`) |
 | `last_contact` | date | no | Auto-updated when an event mentions this person |
 | `relationships` | list[object] | no | Connections to other people (see below) |
 | `life_events` | list[object] | no | Notable life events (see below) |
@@ -71,20 +71,34 @@ Example: Theo's file might have `relationships: [{person_id: friend_felix, label
 
 **How people are tracked:**
 - Created via context updates or the conversational agent
-- `close_friend` flag enables 3-week birthday reminder window
+- `groups` is a list of group IDs (e.g. `["close-friends", "bjj", "college"]`). The `"close-friends"` group enables 3-week birthday reminder window.
 - `last_contact` is auto-updated when `create_event` mentions a person by name (only if the event date is more recent than the current value, to avoid backdating historical events)
 - `relationships` maps connections between people (e.g. "Theo's brother is Felix")
 - `life_events` tracks notable happenings in a friend's life (engagement, wedding, trips, etc.)
 
 **How birthdays surface in digests:**
-- Close friends: included in morning digest if birthday is within 21 days
+- People in the `"close-friends"` group: included in morning digest if birthday is within 21 days
   - 15-21 days: "birthday coming up"
   - 8-14 days: "start thinking about a gift"
   - 1-7 days: "finalize gift plans!"
   - Day-of: "TODAY is X's birthday!"
-- Non-close-friends: only mentioned on the day itself
+- Others: only mentioned on the day itself
 - Feb 29 birthdays: treated as Mar 1 in non-leap years
 - If no events match today but birthdays exist, a birthday-focused digest is sent instead of falling back to questions
+
+---
+
+### Groups (`groups/`)
+
+One file per group: `groups/{group_id}.yaml`.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `group_id` | string | yes | Stable identifier (e.g. `close-friends`, `bjj`, `college`) |
+| `display_name` | string | yes | Human-readable name shown in UI |
+| `color` | string | no | Hex color for graph visualization (e.g. `#e91e8c`) |
+
+Groups are flat tags assigned to people via the `groups` field. The special group `close-friends` enables extended birthday reminder windows.
 
 ---
 

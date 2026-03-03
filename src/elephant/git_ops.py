@@ -5,6 +5,8 @@ import os
 import subprocess
 from datetime import date
 
+from elephant.tracing import GitCommitStep, record_step
+
 logger = logging.getLogger(__name__)
 
 
@@ -78,4 +80,7 @@ class GitRepo:
         sha_result = self._run(["rev-parse", "HEAD"])
         sha = sha_result.stdout.strip()
         logger.info("Committed: %s (%s)", commit_msg, sha[:8])
+
+        record_step(GitCommitStep(sha=sha, message=commit_msg))
+
         return sha

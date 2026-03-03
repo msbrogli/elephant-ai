@@ -104,7 +104,7 @@ class TestAgentHistory:
         store.append_chat_history("previous question", "previous answer")
 
         llm.chat_with_tools = AsyncMock(return_value=LLMResponse(
-            content="OK", model="m", usage={}, tool_calls=[],
+            content="OK. No update needed.", model="m", usage={}, tool_calls=[],
         ))
 
         await agent.handle("new message", "Telegram")
@@ -133,7 +133,7 @@ class TestAgentHistory:
             store.append_chat_history(f"u{i}", f"a{i}")
 
         llm.chat_with_tools = AsyncMock(return_value=LLMResponse(
-            content="OK", model="m", usage={}, tool_calls=[],
+            content="OK. No update needed.", model="m", usage={}, tool_calls=[],
         ))
 
         await agent.handle("latest", "Telegram")
@@ -149,11 +149,11 @@ class TestAgentHistory:
     async def test_empty_history_works(self, agent_deps):
         agent, store, llm = agent_deps
         llm.chat_with_tools = AsyncMock(return_value=LLMResponse(
-            content="Hello!", model="m", usage={}, tool_calls=[],
+            content="Hello! No update needed.", model="m", usage={}, tool_calls=[],
         ))
 
         result = await agent.handle("hi", "Telegram")
-        assert result == "Hello!"
+        assert result == "Hello! No update needed."
 
         call_args = llm.chat_with_tools.call_args
         messages = call_args[0][0]

@@ -13,6 +13,7 @@ from elephant.data.models import RawMessage, RawMessageAttachment
 from elephant.llm.prompts import describe_image
 from elephant.memory_parser import parse_memories_from_document
 from elephant.tools.agent import ConversationalAgent
+from elephant.tracing import IntentStep, finish_trace, record_step, start_trace
 
 if TYPE_CHECKING:
     from elephant.data.store import DataStore
@@ -34,15 +35,28 @@ class AnytimeLogFlow:
         messaging: MessagingClient,
         git: GitRepo,
         history_limit: int = 500,
+        database_name: str = "",
+        verify_traces: bool = False,
     ) -> None:
         self._store = store
         self._llm = llm
         self._parsing_model = parsing_model
         self._messaging = messaging
         self._git = git
+        self._database_name = database_name
         self._agent = ConversationalAgent(
-            store, llm, parsing_model, git, history_limit=history_limit,
+            store, llm, parsing_model, git,
+            history_limit=history_limit,
+            verify_traces=verify_traces,
         )
+
+    @staticmethod
+    def _set_trace_response(text: str) -> None:
+        from elephant.tracing import get_current_trace
+
+        trace = get_current_trace()
+        if trace is not None:
+            trace.final_response = text
 
     async def handle_message(self, message: IncomingMessage) -> None:
         """Main entry point for all incoming messages."""
@@ -63,26 +77,55 @@ class AnytimeLogFlow:
 
         await self._messaging.send_chat_action()
 
-        digest_state = self._store.read_digest_state()
-        pending_questions = self._store.read_pending_questions()
-
-        intent = await resolve_intent(
-            message,
-            digest_state,
-            pending_questions,
-            llm=self._llm,
-            model=self._parsing_model,
+        trace = start_trace(
+            database_name=self._database_name,
+            message_id=message.message_id,
+            sender=message.sender,
+            message_text=message.text,
         )
 
-        logger.info("Resolved intent: %s", intent.value)
+        intent_value = ""
+        final_response = ""
+        error_msg: str | None = None
+        try:
+            digest_state = self._store.read_digest_state()
+            pending_questions = self._store.read_pending_questions()
 
-        if intent == Intent.DIGEST_FEEDBACK:
-            await self._handle_digest_feedback(message, digest_state.last_digest_memory_ids)
-        elif intent == Intent.ANSWER_TO_QUESTION:
-            await self._handle_answer(message, pending_questions)
-        else:
-            # NEW_MEMORY, CONTEXT_UPDATE, and anything else → conversational agent
-            await self._handle_with_agent(message)
+            intent = await resolve_intent(
+                message,
+                digest_state,
+                pending_questions,
+                llm=self._llm,
+                model=self._parsing_model,
+            )
+
+            intent_value = intent.value
+            logger.info("Resolved intent: %s", intent_value)
+
+            record_step(IntentStep(
+                resolved_intent=intent_value,
+                message_text=message.text,
+                sender=message.sender,
+            ))
+
+            if intent == Intent.DIGEST_FEEDBACK:
+                await self._handle_digest_feedback(message, digest_state.last_digest_memory_ids)
+            elif intent == Intent.ANSWER_TO_QUESTION:
+                await self._handle_answer(message, pending_questions)
+            else:
+                await self._handle_with_agent(message)
+        except Exception as exc:
+            error_msg = f"{type(exc).__name__}: {exc}"
+            logger.exception("Error processing message %s", message.message_id)
+            raise
+        finally:
+            finished = finish_trace(
+                intent=intent_value,
+                final_response=trace.final_response or final_response,
+                error=error_msg,
+            )
+            if finished is not None:
+                self._store.append_trace(finished)
 
     async def _handle_with_agent(self, message: IncomingMessage) -> None:
         """Route message through the conversational agent."""
@@ -121,6 +164,7 @@ class AnytimeLogFlow:
             text, source, attachments=message.attachments or None,
             message_id=message.message_id,
         )
+        self._set_trace_response(response_text)
         await self._messaging.send_text(response_text)
 
     _MAX_DOCUMENT_SIZE = 100_000  # ~100 KB limit for document content
@@ -139,10 +183,12 @@ class AnytimeLogFlow:
                 content = f.read(self._MAX_DOCUMENT_SIZE)
         except Exception:
             logger.warning("Failed to read document %s", doc_path, exc_info=True)
+            self._set_trace_response("Sorry, I couldn't read that file.")
             await self._messaging.send_text("Sorry, I couldn't read that file.")
             return
 
         if not content.strip():
+            self._set_trace_response("The file appears to be empty.")
             await self._messaging.send_text("The file appears to be empty.")
             return
 
@@ -169,10 +215,12 @@ class AnytimeLogFlow:
                 caption, source, attachments=message.attachments or None,
                 message_id=message.message_id,
             )
+            self._set_trace_response(response_text)
             await self._messaging.send_text(response_text)
             return
 
         if not memories:
+            self._set_trace_response("I couldn't find any memories in that file.")
             await self._messaging.send_text("I couldn't find any memories in that file.")
             return
 
@@ -185,6 +233,7 @@ class AnytimeLogFlow:
         summary = f"Got it! Logged {len(memories)} memories from your file.\n\n{titles}"
         if len(memories) > 10:
             summary += f"\n...and {len(memories) - 10} more."
+        self._set_trace_response(summary)
         await self._messaging.send_text(summary)
 
     async def _handle_digest_feedback(
@@ -204,7 +253,9 @@ class AnytimeLogFlow:
             "negative": "Thanks for the feedback, I'll adjust.",
             "neutral": "Noted!",
         }
-        await self._messaging.send_text(responses.get(sentiment, "Noted!"))
+        response_text = responses.get(sentiment, "Noted!")
+        self._set_trace_response(response_text)
+        await self._messaging.send_text(response_text)
 
     async def _handle_answer(
         self, message: IncomingMessage, pending_questions: Any
@@ -222,6 +273,7 @@ class AnytimeLogFlow:
                 )
                 if success:
                     self._git.auto_commit("enrichment", f"Answer to {q.id}")
+                    self._set_trace_response("Thanks! I've updated the memory.")
                     await self._messaging.send_text("Thanks! I've updated the memory.")
                 return
 

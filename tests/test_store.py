@@ -63,7 +63,7 @@ class TestInitialize:
 
         # Write a person
         store.write_person(
-            Person(person_id="test", display_name="Test", relationship="friend")
+            Person(person_id="test", display_name="Test", relationship=["friend"])
         )
 
         # Re-initialize should not overwrite
@@ -154,7 +154,7 @@ class TestPeople:
         store.initialize()
 
         person = Person(
-            person_id="daughter", display_name="Lily", relationship="child",
+            person_id="daughter", display_name="Lily", relationship=["child"],
         )
         path = store.write_person(person)
         assert os.path.exists(path)
@@ -174,10 +174,10 @@ class TestPeople:
         store.initialize()
 
         store.write_person(
-            Person(person_id="daughter", display_name="Lily", relationship="child"),
+            Person(person_id="daughter", display_name="Lily", relationship=["child"]),
         )
         store.write_person(
-            Person(person_id="friend_theo", display_name="Theo", relationship="friend"),
+            Person(person_id="friend_theo", display_name="Theo", relationship=["friend"]),
         )
 
         people = store.read_all_people()
@@ -195,7 +195,7 @@ class TestPeople:
         store.initialize()
 
         store.write_person(
-            Person(person_id="test", display_name="Test", relationship="friend"),
+            Person(person_id="test", display_name="Test", relationship=["friend"]),
         )
         assert store.delete_person("test") is True
         assert store.read_person("test") is None
@@ -205,21 +205,21 @@ class TestPeople:
         store.initialize()
         assert store.delete_person("nonexistent") is False
 
-    def test_write_person_with_new_fields(self, data_dir):
+    def test_write_person_with_groups(self, data_dir):
         store = DataStore(data_dir)
         store.initialize()
 
         person = Person(
             person_id="friend_theo",
             display_name="Theo",
-            relationship="friend",
-            close_friend=True,
+            relationship=["friend"],
+            groups=["close-friends", "bjj"],
         )
         store.write_person(person)
 
         loaded = store.read_person("friend_theo")
         assert loaded is not None
-        assert loaded.close_friend is True
+        assert loaded.groups == ["close-friends", "bjj"]
 
 
 

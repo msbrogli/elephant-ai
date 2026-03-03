@@ -217,18 +217,18 @@ fields:
     required: true
     description: "Human-readable name shown in digests and logs"
   relationship:
-    type: string
+    type: list[string]
     required: true
-    description: "Relationship to the user (e.g. 'child', 'spouse', 'friend', 'cousin')"
+    description: "Relationships to the user (e.g. ['child'], ['nephew', 'godson'])"
   birthday:
     type: date
     required: false
     description: "Birthday in YYYY-MM-DD format"
-  close_friend:
-    type: boolean
+  groups:
+    type: list[string]
     required: false
-    default: false
-    description: "Whether this person is a close friend (gets earlier birthday reminders)"
+    default: []
+    description: "Group IDs this person belongs to (e.g. close-friends, bjj, college)"
   last_contact:
     type: date
     required: false
@@ -285,6 +285,24 @@ fields:
     type: string
     required: false
     description: "Freeform notes about this person"
+"""
+
+GROUPS_DIR_SCHEMA = """\
+version: 1
+description: "Each file represents one group. Filename: {group_id}.yaml"
+fields:
+  group_id:
+    type: string
+    required: true
+    description: "Stable identifier (e.g. 'close-friends', 'bjj', 'college')"
+  display_name:
+    type: string
+    required: true
+    description: "Human-readable group name shown in the UI"
+  color:
+    type: string
+    required: false
+    description: "Hex color for graph visualization (e.g. '#e91e8c')"
 """
 
 PREFERENCES_SCHEMA = """\
@@ -418,6 +436,7 @@ DIR_SCHEMAS: dict[str, str] = {
     "photo_index/_schema.yaml": PHOTO_INDEX_SCHEMA,
     "video_index/_schema.yaml": VIDEO_INDEX_SCHEMA,
     "people/_schema.yaml": PEOPLE_DIR_SCHEMA,
+    "groups/_schema.yaml": GROUPS_DIR_SCHEMA,
 }
 
 # Mapping of single-file stores to their initial content (includes _schema block)

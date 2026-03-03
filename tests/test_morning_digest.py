@@ -243,8 +243,8 @@ class TestBirthdayReminders:
     def test_close_friend_within_window(self):
         people = [
             Person(
-                person_id="theo", display_name="Theo", relationship="friend",
-                birthday=date(1990, 3, 10), close_friend=True,
+                person_id="theo", display_name="Theo", relationship=["friend"],
+                birthday=date(1990, 3, 10), groups=["close-friends"],
             ),
         ]
         today = date(2026, 2, 25)
@@ -256,8 +256,8 @@ class TestBirthdayReminders:
     def test_close_friend_outside_window(self):
         people = [
             Person(
-                person_id="theo", display_name="Theo", relationship="friend",
-                birthday=date(1990, 6, 15), close_friend=True,
+                person_id="theo", display_name="Theo", relationship=["friend"],
+                birthday=date(1990, 6, 15), groups=["close-friends"],
             ),
         ]
         today = date(2026, 2, 25)
@@ -267,7 +267,7 @@ class TestBirthdayReminders:
     def test_regular_person_day_of_only(self):
         people = [
             Person(
-                person_id="theo", display_name="Theo", relationship="friend",
+                person_id="theo", display_name="Theo", relationship=["friend"],
                 birthday=date(1990, 2, 25),
             ),
         ]
@@ -279,7 +279,7 @@ class TestBirthdayReminders:
     def test_regular_person_not_today(self):
         people = [
             Person(
-                person_id="theo", display_name="Theo", relationship="friend",
+                person_id="theo", display_name="Theo", relationship=["friend"],
                 birthday=date(1990, 3, 10),
             ),
         ]
@@ -290,8 +290,8 @@ class TestBirthdayReminders:
     def test_feb_29_birthday_non_leap_year(self):
         people = [
             Person(
-                person_id="leap", display_name="Leap", relationship="friend",
-                birthday=date(2000, 2, 29), close_friend=True,
+                person_id="leap", display_name="Leap", relationship=["friend"],
+                birthday=date(2000, 2, 29), groups=["close-friends"],
             ),
         ]
         # 2025 is not a leap year, so Feb 29 -> Mar 1
@@ -303,8 +303,8 @@ class TestBirthdayReminders:
     def test_feb_29_birthday_leap_year(self):
         people = [
             Person(
-                person_id="leap", display_name="Leap", relationship="friend",
-                birthday=date(2000, 2, 29), close_friend=True,
+                person_id="leap", display_name="Leap", relationship=["friend"],
+                birthday=date(2000, 2, 29), groups=["close-friends"],
             ),
         ]
         today = date(2028, 2, 28)  # 2028 is a leap year
@@ -315,7 +315,7 @@ class TestBirthdayReminders:
     def test_no_birthday_set(self):
         people = [
             Person(
-                person_id="theo", display_name="Theo", relationship="friend",
+                person_id="theo", display_name="Theo", relationship=["friend"],
             ),
         ]
         today = date(2026, 2, 25)
@@ -325,12 +325,12 @@ class TestBirthdayReminders:
     def test_multiple_sorted_by_days_until(self):
         people = [
             Person(
-                person_id="far", display_name="Far", relationship="friend",
-                birthday=date(1990, 3, 15), close_friend=True,
+                person_id="far", display_name="Far", relationship=["friend"],
+                birthday=date(1990, 3, 15), groups=["close-friends"],
             ),
             Person(
-                person_id="near", display_name="Near", relationship="friend",
-                birthday=date(1990, 3, 1), close_friend=True,
+                person_id="near", display_name="Near", relationship=["friend"],
+                birthday=date(1990, 3, 1), groups=["close-friends"],
             ),
         ]
         today = date(2026, 2, 25)
@@ -342,8 +342,8 @@ class TestBirthdayReminders:
     def test_close_friend_day_of(self):
         people = [
             Person(
-                person_id="theo", display_name="Theo", relationship="friend",
-                birthday=date(1990, 2, 25), close_friend=True,
+                person_id="theo", display_name="Theo", relationship=["friend"],
+                birthday=date(1990, 2, 25), groups=["close-friends"],
             ),
         ]
         today = date(2026, 2, 25)
@@ -363,8 +363,8 @@ class TestBirthdayDigestIntegration:
         # Add a close friend with a birthday coming up
         store.write_person(
             Person(
-                person_id="theo", display_name="Theo", relationship="friend",
-                birthday=date(1990, 3, 10), close_friend=True,
+                person_id="theo", display_name="Theo", relationship=["friend"],
+                birthday=date(1990, 3, 10), groups=["close-friends"],
             ),
         )
 

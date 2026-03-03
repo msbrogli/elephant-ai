@@ -45,3 +45,4 @@ disallow_untyped_defs = false
 testpaths = ["tests"]
 pythonpath = ["src"]
 asyncio_mode = "auto"
+markers = ["llm: tests that call a real LLM API (skip with -m 'not llm')"]

@@ -93,7 +93,7 @@ def _check_unknown_relationships(store: DataStore, report: AuditReport) -> None:
     """Find people with relationship == 'unknown'."""
     people = store.read_all_people()
     for person in people:
-        if person.relationship == "unknown":
+        if person.relationship == ["unknown"]:
             report.issues.append(AuditIssue(
                 category="unknown_relationship",
                 severity="warning",

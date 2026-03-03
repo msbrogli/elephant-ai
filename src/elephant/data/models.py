@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # --- Shared sub-models ---
 
@@ -120,6 +120,15 @@ class VideoEntry(BaseModel):
     memory_id: str | None = None
 
 
+# --- Groups ---
+
+
+class Group(BaseModel):
+    group_id: str
+    display_name: str
+    color: str | None = None
+
+
 # --- People ---
 
 
@@ -153,9 +162,17 @@ class PersonPreferences(BaseModel):
 class Person(BaseModel):
     person_id: str
     display_name: str
-    relationship: str
+    relationship: list[str] = Field(default_factory=lambda: ["unknown"])
+
+    @field_validator("relationship", mode="before")
+    @classmethod
+    def _coerce_relationship(cls, v: object) -> list[str]:
+        if isinstance(v, str):
+            return [v]
+        return v  # type: ignore[return-value]
+    other_names: list[str] = Field(default_factory=list)
     birthday: date | None = None
-    close_friend: bool = False
+    groups: list[str] = Field(default_factory=list)
     relationships: list[PersonRelationship] = Field(default_factory=list)
     life_events: list[LifeEvent] = Field(default_factory=list)
     face_clusters: list[str] = Field(default_factory=list)

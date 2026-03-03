@@ -28,7 +28,7 @@ class BirthdayReminder:
     person: Person
     birthday: date
     days_until: int
-    is_close_friend: bool
+    is_close_friend: bool  # True when person is in "close-friends" group
 
 
 def find_upcoming_birthdays(
@@ -71,7 +71,7 @@ def find_upcoming_birthdays(
 
         days_until = (this_year_bday - today).days
 
-        if person.close_friend and days_until <= close_friend_window_days:
+        if "close-friends" in person.groups and days_until <= close_friend_window_days:
             reminders.append(BirthdayReminder(
                 person=person, birthday=this_year_bday,
                 days_until=days_until, is_close_friend=True,

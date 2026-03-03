@@ -137,6 +137,8 @@ async def run(
             messaging=messaging,
             git=git,
             history_limit=db_cfg.chat_history_limit,
+            database_name=db_cfg.name,
+            verify_traces=config.llm.verify_traces,
         )
         morning = MorningDigestFlow(
             store=store,

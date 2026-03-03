@@ -4,6 +4,18 @@ from __future__ import annotations
 
 from typing import Any
 
+# Tools that mutate data — the LLM must call at least one of these
+# or explicitly state "No update needed." in its response.
+UPDATE_TOOLS: frozenset[str] = frozenset({
+    "create_memory", "update_memory", "delete_memory",
+    "update_person", "update_locations", "add_note",
+})
+
+QUERY_TOOLS: frozenset[str] = frozenset({
+    "list_memories", "get_memory", "search_people",
+    "get_person", "list_people", "describe_attachment",
+})
+
 TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "type": "function",
@@ -87,7 +99,13 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                     },
                     "date": {
                         "type": "string",
-                        "description": "Memory date (YYYY-MM-DD). Use today if not specified.",
+                        "description": (
+                            "Memory date (YYYY-MM-DD). Resolve relative "
+                            "references ('two weeks ago', 'last month', "
+                            "'yesterday') to an actual date using today's "
+                            "date from the system context. Only default to "
+                            "today if the event truly happened today."
+                        ),
                     },
                     "time": {
                         "type": "string",
@@ -260,8 +278,9 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "function": {
             "name": "update_person",
             "description": (
-                "Update a person's details: birthday, close_friend status, "
-                "relationship, notes, last_contact, current_threads, "
+                "Update a person's details, or create a new person if they don't exist yet. "
+                "Supports: birthday, other_names (nicknames), groups (list of group IDs), "
+                "relationship (list of strings), notes, current_threads, "
                 "interaction_frequency_target."
             ),
             "parameters": {
@@ -269,15 +288,50 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "properties": {
                     "person_id": {
                         "type": "string",
-                        "description": "The person_id to update",
+                        "description": "The person_id to update or create",
+                    },
+                    "create": {
+                        "type": "boolean",
+                        "description": (
+                            "Set to true to create the person if they don't exist. "
+                            "IMPORTANT: Before using create=true, you MUST first call "
+                            "search_people to verify the person doesn't already exist, "
+                            "and you MUST have their full name (first + family name). "
+                            "Never create a person with only a first name. "
+                            "Requires display_name and relationship."
+                        ),
                     },
                     "display_name": {"type": "string"},
-                    "relationship": {"type": "string"},
+                    "other_names": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Nicknames, abbreviations, or alternative names "
+                            "(e.g. 'Mike' for Michael, 'Beth' for "
+                            "Elizabeth). Set when the user mentions "
+                            "how someone is commonly called."
+                        ),
+                    },
+                    "relationship": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Relationships to the user "
+                            "(e.g. ['nephew', 'godson'])"
+                        ),
+                    },
                     "birthday": {
                         "type": "string",
                         "description": "Birthday in YYYY-MM-DD format",
                     },
-                    "close_friend": {"type": "boolean"},
+                    "groups": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Group IDs this person belongs to "
+                            "(e.g. ['close-friends', 'bjj', 'college'])"
+                        ),
+                    },
                     "notes": {"type": "string"},
                     "current_threads": {
                         "type": "array",
@@ -371,6 +425,46 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                     },
                 },
                 "required": ["file_path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_groups",
+            "description": "List all people groups with their display names and colors.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "update_group",
+            "description": (
+                "Create or update a people group. Groups are flat tags "
+                "like 'bjj', 'college', 'close-friends'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "group_id": {
+                        "type": "string",
+                        "description": "Group identifier (e.g. 'bjj', 'close-friends')",
+                    },
+                    "display_name": {
+                        "type": "string",
+                        "description": "Human-readable group name",
+                    },
+                    "color": {
+                        "type": "string",
+                        "description": "Hex color for graph visualization (e.g. '#e91e8c')",
+                    },
+                },
+                "required": ["group_id", "display_name"],
             },
         },
     },

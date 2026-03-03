@@ -121,7 +121,7 @@ def _build_update_context(people: list[Person], prefs: PreferencesFile) -> str:
     """Build context string for the update extraction prompt."""
     parts: list[str] = []
     if people:
-        names = [f"{p.display_name} ({p.relationship})" for p in people]
+        names = [f"{p.display_name} ({', '.join(p.relationship)})" for p in people]
         parts.append(f"People: {', '.join(names)}")
     if prefs.locations:
         locs = [f"{k}: {v}" for k, v in prefs.locations.items()]

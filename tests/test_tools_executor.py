@@ -99,7 +99,7 @@ class TestCreateMemory:
         ex, store, git, llm = executor
         # Pre-create person so disambiguation doesn't block
         store.write_person(
-            Person(person_id="lily", display_name="Lily", relationship="daughter"),
+            Person(person_id="lily", display_name="Lily", relationship=["daughter"]),
         )
 
         tc = ToolCall(
@@ -211,10 +211,10 @@ class TestSearchPeople:
     async def test_search_by_name(self, executor):
         ex, store, git, llm = executor
         store.write_person(
-            Person(person_id="lily", display_name="Lily", relationship="daughter"),
+            Person(person_id="lily", display_name="Lily", relationship=["daughter"]),
         )
         store.write_person(
-            Person(person_id="theo", display_name="Theo", relationship="friend"),
+            Person(person_id="theo", display_name="Theo", relationship=["friend"]),
         )
 
         tc = ToolCall(
@@ -228,7 +228,7 @@ class TestSearchPeople:
     async def test_partial_match(self, executor):
         ex, store, git, llm = executor
         store.write_person(
-            Person(person_id="lily", display_name="Lily", relationship="daughter"),
+            Person(person_id="lily", display_name="Lily", relationship=["daughter"]),
         )
 
         tc = ToolCall(
@@ -252,7 +252,7 @@ class TestGetPerson:
     async def test_found(self, executor):
         ex, store, git, llm = executor
         store.write_person(
-            Person(person_id="lily", display_name="Lily", relationship="daughter"),
+            Person(person_id="lily", display_name="Lily", relationship=["daughter"]),
         )
 
         tc = ToolCall(
@@ -261,7 +261,7 @@ class TestGetPerson:
         )
         result = json.loads(await ex.execute(tc))
         assert result["display_name"] == "Lily"
-        assert result["relationship"] == "daughter"
+        assert result["relationship"] == ["daughter"]
 
     async def test_not_found(self, executor):
         ex, store, git, llm = executor
@@ -313,28 +313,28 @@ class TestListPeople:
     async def test_with_people(self, executor):
         ex, store, git, llm = executor
         store.write_person(
-            Person(person_id="lily", display_name="Lily", relationship="daughter"),
+            Person(person_id="lily", display_name="Lily", relationship=["daughter"]),
         )
 
         tc = ToolCall(id="1", function_name="list_people", arguments="{}")
         result = json.loads(await ex.execute(tc))
         assert len(result["people"]) == 1
         assert result["people"][0]["display_name"] == "Lily"
-        assert result["people"][0]["close_friend"] is False
+        assert result["people"][0]["groups"] == []
 
 
 class TestUpdatePerson:
     async def test_updates_existing(self, executor):
         ex, store, git, llm = executor
         store.write_person(
-            Person(person_id="lily", display_name="Lily", relationship="daughter"),
+            Person(person_id="lily", display_name="Lily", relationship=["daughter"]),
         )
 
         tc = ToolCall(
             id="1", function_name="update_person",
             arguments=json.dumps({
                 "person_id": "lily",
-                "close_friend": True,
+                "groups": ["close-friends"],
                 "birthday": "2023-01-10",
             }),
         )
@@ -343,13 +343,13 @@ class TestUpdatePerson:
 
         person = store.read_person("lily")
         assert person is not None
-        assert person.close_friend is True
+        assert person.groups == ["close-friends"]
         assert person.birthday is not None
 
     async def test_updates_current_threads(self, executor):
         ex, store, git, llm = executor
         store.write_person(
-            Person(person_id="theo", display_name="Theo", relationship="friend"),
+            Person(person_id="theo", display_name="Theo", relationship=["friend"]),
         )
 
         tc = ToolCall(
@@ -388,7 +388,7 @@ class TestComputedLastContact:
         """last_contact is derived from memories, not stored on Person."""
         ex, store, git, llm = executor
         store.write_person(
-            Person(person_id="lily", display_name="Lily", relationship="daughter"),
+            Person(person_id="lily", display_name="Lily", relationship=["daughter"]),
         )
 
         tc = ToolCall(
@@ -412,7 +412,7 @@ class TestComputedLastContact:
     async def test_list_people_includes_computed_last_contact(self, executor):
         ex, store, git, llm = executor
         store.write_person(
-            Person(person_id="lily", display_name="Lily", relationship="daughter"),
+            Person(person_id="lily", display_name="Lily", relationship=["daughter"]),
         )
         from elephant.data.models import Memory
         store.write_memory(Memory(
@@ -447,7 +447,7 @@ class TestEntityDisambiguation:
         """Unknown name similar to existing person returns suggestions."""
         ex, store, git, llm = executor
         store.write_person(
-            Person(person_id="lily", display_name="Lily", relationship="daughter"),
+            Person(person_id="lily", display_name="Lily", relationship=["daughter"]),
         )
         tc = ToolCall(
             id="1", function_name="create_memory",
@@ -484,13 +484,13 @@ class TestAutoCreatePerson:
         person = store.read_person("yan")
         assert person is not None
         assert person.display_name == "Yan"
-        assert person.relationship == "unknown"
+        assert person.relationship == ["unknown"]
 
     async def test_no_duplicate_when_person_exists(self, executor):
         """Existing person is not duplicated."""
         ex, store, git, llm = executor
         store.write_person(
-            Person(person_id="lily", display_name="Lily", relationship="daughter"),
+            Person(person_id="lily", display_name="Lily", relationship=["daughter"]),
         )
 
         tc = ToolCall(

@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 import aiohttp
 from aiohttp import web
 
+from elephant.web.traces import register_routes as register_trace_routes
 from elephant.webhooks.telegram import bot_session_key, bot_token_key, create_telegram_webhook
 from elephant.webhooks.twilio import create_twilio_webhook
 
@@ -68,6 +69,9 @@ def create_app(
     if flows:
         app[flows_key] = dict(flows)
         app.router.add_post("/api/run/{flow_name}", _run_flow_handler)
+
+    if router is not None:
+        register_trace_routes(app, router)
 
     if config is not None and router is not None:
         provider = config.messaging.provider

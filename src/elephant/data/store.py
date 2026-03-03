@@ -14,6 +14,7 @@ from elephant.data.models import (
     ChatHistoryEntry,
     ChatHistoryFile,
     DigestState,
+    Group,
     Memory,
     PendingQuestionsFile,
     Person,
@@ -23,6 +24,7 @@ from elephant.data.models import (
     VideoEntry,
 )
 from elephant.data.schemas import DIR_SCHEMAS, SINGLE_FILE_SCHEMAS
+from elephant.tracing import Trace
 
 # Directories to create under data_dir
 _DIRS = [
@@ -30,6 +32,7 @@ _DIRS = [
     "photo_index",
     "video_index",
     "people",
+    "groups",
     "faces",
     "logs",
     "media",
@@ -228,6 +231,53 @@ class DataStore:
     def delete_person(self, person_id: str) -> bool:
         """Delete a person by ID. Returns True if deleted."""
         path = self._person_path(person_id)
+        if not os.path.exists(path):
+            return False
+        os.remove(path)
+        return True
+
+    # --- Groups (directory-based) ---
+
+    def _group_path(self, group_id: str) -> str:
+        return os.path.join(self.data_dir, "groups", f"{group_id}.yaml")
+
+    def read_group(self, group_id: str) -> Group | None:
+        """Read a single group by ID. Returns None if not found."""
+        path = self._group_path(group_id)
+        if not os.path.exists(path):
+            return None
+        data = self._read_yaml(path)
+        if not data:
+            return None
+        return Group.model_validate(data)
+
+    def write_group(self, group: Group) -> str:
+        """Write a group to its file. Returns the file path."""
+        path = self._group_path(group.group_id)
+        self._write_yaml(path, group.model_dump(mode="json", exclude_none=True))
+        return path
+
+    def read_all_groups(self) -> list[Group]:
+        """Read all groups from the groups directory."""
+        groups_dir = os.path.join(self.data_dir, "groups")
+        if not os.path.isdir(groups_dir):
+            return []
+        results: list[Group] = []
+        for fname in sorted(os.listdir(groups_dir)):
+            if not fname.endswith(".yaml") or fname.startswith("_"):
+                continue
+            path = os.path.join(groups_dir, fname)
+            try:
+                data = self._read_yaml(path)
+                if data:
+                    results.append(Group.model_validate(data))
+            except Exception:
+                continue
+        return results
+
+    def delete_group(self, group_id: str) -> bool:
+        """Delete a group by ID. Returns True if deleted."""
+        path = self._group_path(group_id)
         if not os.path.exists(path):
             return False
         os.remove(path)
@@ -528,7 +578,7 @@ class DataStore:
         return result
 
     def find_memory_by_id(self, memory_id: str) -> Memory | None:
-        """Find a memory by its ID. Returns None if not found."""
+        """Find a memory by its ID. Falls back to fuzzy slug match within the date dir."""
         # Parse date from ID (first 8 chars: YYYYMMDD)
         if len(memory_id) < 9 or memory_id[8] != "_":
             return None
@@ -539,10 +589,40 @@ class DataStore:
         except ValueError:
             return None
 
+        # Exact match
         path = self._memory_path(memory_date, slug)
-        if not os.path.exists(path):
+        if os.path.exists(path):
+            return self.read_memory(path)
+
+        # Fuzzy fallback: search the date directory for the best match
+        date_dir = os.path.join(
+            self.data_dir, "memories",
+            memory_date.strftime("%Y"), memory_date.strftime("%m"),
+        )
+        if not os.path.isdir(date_dir):
             return None
-        return self.read_memory(path)
+
+        from difflib import SequenceMatcher
+
+        prefix = date_str + "_"
+        slug_lower = slug.lower()
+        best_path: str | None = None
+        best_score = 0.0
+        for fname in os.listdir(date_dir):
+            if not fname.startswith(prefix) or not fname.endswith(".yaml"):
+                continue
+            file_slug = fname[len(prefix):-5]  # strip prefix and .yaml
+            # Substring check
+            if slug_lower in file_slug.lower():
+                return self.read_memory(os.path.join(date_dir, fname))
+            score = SequenceMatcher(None, slug_lower, file_slug.lower()).ratio()
+            if score > best_score:
+                best_score = score
+                best_path = os.path.join(date_dir, fname)
+
+        if best_path and best_score >= 0.5:
+            return self.read_memory(best_path)
+        return None
 
     def update_memory(self, memory_id: str, updates: dict[str, Any]) -> Memory | None:
         """Update fields on an existing memory. Returns updated memory or None."""
@@ -569,4 +649,66 @@ class DataStore:
             return False
         os.remove(path)
         return True
+
+    # --- Traces (JSONL) ---
+
+    def _traces_jsonl_path(self) -> str:
+        return os.path.join(self.data_dir, "logs", "traces.jsonl")
+
+    def append_trace(self, trace: Trace) -> None:
+        """Append a finished trace as a single JSON line."""
+        path = self._traces_jsonl_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "a") as f:
+            f.write(trace.model_dump_json() + "\n")
+
+    def read_traces(self, limit: int = 30, offset: int = 0) -> tuple[list[Trace], int]:
+        """Read traces newest-first with pagination. Returns (traces, total)."""
+        import json as _json
+
+        path = self._traces_jsonl_path()
+        if not os.path.exists(path):
+            return [], 0
+
+        all_lines: list[str] = []
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    all_lines.append(line)
+
+        total = len(all_lines)
+        # Newest first — reverse, then slice
+        all_lines.reverse()
+        page = all_lines[offset : offset + limit]
+
+        traces: list[Trace] = []
+        for line in page:
+            try:
+                data = _json.loads(line)
+                traces.append(Trace.model_validate(data))
+            except Exception:
+                continue
+        return traces, total
+
+    def read_trace_by_id(self, trace_id: str) -> Trace | None:
+        """Find a single trace by its trace_id."""
+        import json as _json
+
+        path = self._traces_jsonl_path()
+        if not os.path.exists(path):
+            return None
+
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    data = _json.loads(line)
+                    if data.get("trace_id") == trace_id:
+                        return Trace.model_validate(data)
+                except Exception:
+                    continue
+        return None
 

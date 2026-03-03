@@ -33,6 +33,18 @@ def main() -> None:
         help="Database name (default: first in config)",
     )
 
+    # add-message subcommand
+    am = subparsers.add_parser(
+        "add-message",
+        help="Send a message through the full flow as if from Telegram",
+    )
+    am.add_argument("message", help="The message text to send")
+    am.add_argument(
+        "-d", "--database",
+        default=None,
+        help="Database name (default: first in config)",
+    )
+
     # audit subcommand
     au = subparsers.add_parser(
         "audit",
@@ -54,6 +66,10 @@ def main() -> None:
         from elephant.cli.debug_message import run_debug_message
 
         run_debug_message(config_path=args.config, message=args.message, database=args.database)
+    elif args.command == "add-message":
+        from elephant.cli.add_message import run_add_message
+
+        run_add_message(config_path=args.config, message=args.message, database=args.database)
     elif args.command == "audit":
         from elephant.cli.audit import run_audit_cli
 

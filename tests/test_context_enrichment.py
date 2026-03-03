@@ -88,7 +88,7 @@ class TestProcessContextUpdate:
 
         # Create an existing person
         store.write_person(
-            Person(person_id="lily", display_name="Lily", relationship="daughter"),
+            Person(person_id="lily", display_name="Lily", relationship=["daughter"]),
         )
 
         git = MagicMock(spec=GitRepo)
@@ -97,7 +97,7 @@ class TestProcessContextUpdate:
         llm = AsyncMock()
         llm.chat = AsyncMock(
             return_value=LLMResponse(
-                content="person_update:\n  name: Lily\n  field: close_friend\n  value: true",
+                content="person_update:\n  name: Lily\n  field: groups\n  value:\n    - close-friends",
                 model="m",
                 usage={},
             )
@@ -108,7 +108,7 @@ class TestProcessContextUpdate:
         assert result is True
         person = store.read_person("lily")
         assert person is not None
-        assert person.close_friend is True
+        assert "close-friends" in person.groups
 
     async def test_mixed_location_and_note(self, data_dir):
         store = DataStore(data_dir)

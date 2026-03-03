@@ -7,10 +7,11 @@ import json
 import logging
 import uuid
 from datetime import date
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from elephant.data.models import Correction, CurrentThread, MediaLinks, Memory, Person
+from elephant.data.models import Correction, CurrentThread, Group, MediaLinks, Memory, Person
 from elephant.llm.prompts import describe_image
 
 if TYPE_CHECKING:
@@ -33,6 +34,70 @@ def _slugify(text: str) -> str:
 
 _IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
 _MAX_DOCUMENT_SIZE = 100_000  # ~100 KB
+_FUZZY_THRESHOLD = 0.55
+
+
+def _score_person_match(query: str, person: Person) -> float:
+    """Score how well *query* matches a Person (0.0–1.0).
+
+    Scoring tiers:
+      1.0  — exact match on person_id, display_name, or a nickname
+      0.9  — query is a complete token in display_name (e.g. "John" in
+             "John Smith"), or matches a nickname
+      0.7  — query is a substring of display_name or person_id
+      else — SequenceMatcher ratio against display_name (fuzzy)
+
+    For multi-token queries, token-level matching compares *all* query
+    tokens against the name tokens (overlap ratio) to avoid false positives
+    from a single shared surname.
+    """
+    q = query.lower()
+    name = person.display_name.lower()
+    pid = person.person_id.lower()
+    nicks = [n.lower() for n in person.other_names]
+
+    # Exact match on name, person_id, or nickname
+    if q in (name, pid) or q in nicks:
+        return 1.0
+
+    q_tokens = q.split()
+    name_tokens = name.split()
+
+    # Single-token query: check if it matches one of the name tokens
+    if len(q_tokens) == 1:
+        if q in name_tokens:
+            return 0.9
+        # Check fuzzy match against nicknames
+        for nick in nicks:
+            if SequenceMatcher(None, q, nick).ratio() >= 0.8:
+                return 0.9
+        if q in name or q in pid:
+            return 0.7
+        # Fuzzy against individual tokens
+        best = SequenceMatcher(None, q, name).ratio()
+        for token in name_tokens:
+            best = max(best, SequenceMatcher(None, q, token).ratio())
+        for nick in nicks:
+            best = max(best, SequenceMatcher(None, q, nick).ratio())
+        return best
+
+    # Multi-token query: measure how many query tokens match name tokens
+    # This prevents "Robert Smith" from scoring high on
+    # "John Smith" just because they share "Smith".
+    all_targets = name_tokens + nicks
+    matched = 0
+    for qt in q_tokens:
+        token_best = max(
+            (SequenceMatcher(None, qt, nt).ratio() for nt in all_targets),
+            default=0.0,
+        )
+        if token_best >= 0.8:
+            matched += 1
+    overlap = matched / max(len(q_tokens), len(name_tokens))
+
+    # Full-string fuzzy as a floor
+    full_ratio = SequenceMatcher(None, q, name).ratio()
+    return max(overlap, full_ratio)
 
 
 class ToolExecutor:
@@ -57,10 +122,19 @@ class ToolExecutor:
             if handler is None:
                 return json.dumps({"error": f"Unknown tool: {tool_call.function_name}"})
             result = await handler(args)
+            if isinstance(result, dict) and "error" in result:
+                result["retry_hint"] = (
+                    "This tool call failed. Review the error, fix the arguments, and retry."
+                )
             return json.dumps(result, default=str)
         except Exception as e:
             logger.warning("Tool execution failed: %s", e, exc_info=True)
-            return json.dumps({"error": str(e)})
+            return json.dumps({
+                "error": str(e),
+                "retry_hint": (
+                    "This tool call failed. Review the error, fix the arguments, and retry."
+                ),
+            })
 
     async def _handle_list_memories(self, args: dict[str, Any]) -> Any:
         date_from = _parse_date(args.get("date_from"))
@@ -163,7 +237,13 @@ class ToolExecutor:
             self._auto_create_people(memory.people, memory.date)
 
         logger.info("Agent created memory: %s", memory_id)
-        return {"created": memory_id, "title": memory.title, "date": str(memory.date)}
+        return {
+            "created": memory_id,
+            "memory_id": memory_id,
+            "title": memory.title,
+            "date": str(memory.date),
+            "note": "Use this exact memory_id for any future update_memory or get_memory calls.",
+        }
 
     async def _handle_update_memory(self, args: dict[str, Any]) -> Any:
         from datetime import UTC
@@ -196,8 +276,8 @@ class ToolExecutor:
             self._git.auto_commit(
                 "memory", f"Corrected {memory.title}", timestamp=memory.date, paths=[path],
             )
-            return {"corrected": memory_id, "title": memory.title,
-                    "fields": list(updates.keys())}
+            return {"corrected": memory_id, "memory_id": memory.id,
+                    "title": memory.title, "fields": list(updates.keys())}
         else:
             # Same-day: direct update
             updated = memory.model_copy(update=updates)
@@ -205,7 +285,7 @@ class ToolExecutor:
             self._git.auto_commit(
                 "memory", f"Updated {memory.title}", timestamp=memory.date, paths=[path],
             )
-            return {"updated": memory_id, "title": memory.title}
+            return {"updated": memory_id, "memory_id": memory.id, "title": memory.title}
 
     async def _handle_delete_memory(self, args: dict[str, Any]) -> Any:
         memory_id = args["memory_id"]
@@ -213,17 +293,23 @@ class ToolExecutor:
         if not deleted:
             return {"error": f"Memory not found: {memory_id}"}
         self._git.auto_commit("memory", f"Deleted {memory_id}")
-        return {"deleted": memory_id}
+        return {"deleted": memory_id, "memory_id": memory_id}
 
     async def _handle_search_people(self, args: dict[str, Any]) -> Any:
-        name_query = args.get("name", "").lower()
+        name_query = args.get("name", "")
         all_people = self._store.read_all_people()
-        matches = [
-            p for p in all_people
-            if name_query in p.display_name.lower() or name_query in p.person_id.lower()
+        scored = [
+            (p, _score_person_match(name_query, p))
+            for p in all_people
         ]
+        matches = sorted(
+            [(p, s) for p, s in scored if s >= _FUZZY_THRESHOLD],
+            key=lambda x: x[1],
+            reverse=True,
+        )
+        matched_people = [p for p, _ in matches]
         last_contacts = self._store.get_latest_memory_dates_for_people(
-            [p.display_name for p in matches],
+            [p.display_name for p in matched_people],
         )
         return {
             "count": len(matches),
@@ -231,7 +317,9 @@ class ToolExecutor:
                 {
                     "person_id": p.person_id,
                     "display_name": p.display_name,
+                    "other_names": p.other_names,
                     "relationship": p.relationship,
+                    "match_score": round(score, 2),
                     "last_contact": (
                         str(last_contacts.get(p.display_name))
                         if last_contacts.get(p.display_name) else None
@@ -245,7 +333,7 @@ class ToolExecutor:
                         for t in p.current_threads
                     ],
                 }
-                for p in matches
+                for p, score in matches
             ],
         }
 
@@ -272,7 +360,7 @@ class ToolExecutor:
                     "display_name": p.display_name,
                     "relationship": p.relationship,
                     "birthday": str(p.birthday) if p.birthday else None,
-                    "close_friend": p.close_friend,
+                    "groups": p.groups,
                     "last_contact": (
                         str(last_contacts.get(p.display_name))
                         if last_contacts.get(p.display_name) else None
@@ -291,14 +379,82 @@ class ToolExecutor:
 
         person_id = args.get("person_id", "")
         force = args.pop("force", False)
+        create = args.pop("create", False)
         person = self._store.read_person(person_id)
+
+        # Fallback: fuzzy search if exact person_id not found
+        if person is None and not create:
+            scored = [
+                (p, _score_person_match(person_id, p))
+                for p in self._store.read_all_people()
+            ]
+            candidates = sorted(
+                [(p, s) for p, s in scored if s >= _FUZZY_THRESHOLD],
+                key=lambda x: x[1],
+                reverse=True,
+            )
+            if len(candidates) == 1:
+                person = candidates[0][0]
+                person_id = person.person_id
+            elif len(candidates) > 1:
+                # If the top match is clearly better, use it
+                if candidates[0][1] - candidates[1][1] > 0.15:
+                    person = candidates[0][0]
+                    person_id = person.person_id
+                else:
+                    return {
+                        "ambiguous": True,
+                        "candidates": [
+                            {
+                                "person_id": p.person_id,
+                                "display_name": p.display_name,
+                                "match_score": round(s, 2),
+                            }
+                            for p, s in candidates
+                        ],
+                        "message": (
+                            f"Multiple people match '{person_id}': "
+                            + ", ".join(
+                                f"{p.display_name} ({round(s, 2)})"
+                                for p, s in candidates
+                            )
+                            + ". Ask the user which person they mean, "
+                            "then re-call with the exact person_id."
+                        ),
+                    }
+
         if person is None:
-            return {"error": f"Person not found: {person_id}"}
+            if not create:
+                return {"error": f"Person not found: {person_id}"}
+            display_name = args.get("display_name", person_id)
+            # Enforce full name: reject single-word names
+            if " " not in display_name.strip():
+                return {
+                    "error": "full_name_required",
+                    "message": (
+                        f"Cannot create '{display_name}' with only a first name. "
+                        "Please ask the user for their full name "
+                        "(first + family/last name) before creating."
+                    ),
+                }
+            # Derive person_id from display_name if not provided
+            if not person_id:
+                person_id = _slugify(display_name)
+            raw_rel = args.get("relationship", ["unknown"])
+            if isinstance(raw_rel, str):
+                raw_rel = [raw_rel]
+            person = Person(
+                person_id=person_id,
+                display_name=display_name,
+                relationship=raw_rel,
+            )
         allowed = {
-            "display_name", "relationship", "birthday", "close_friend",
-            "notes", "interaction_frequency_target",
+            "display_name", "relationship", "birthday", "groups",
+            "other_names", "notes", "interaction_frequency_target",
         }
         updates: dict[str, Any] = {k: v for k, v in args.items() if k in allowed}
+        if "relationship" in updates and isinstance(updates["relationship"], str):
+            updates["relationship"] = [updates["relationship"]]
         if "birthday" in updates and isinstance(updates["birthday"], str):
             updates["birthday"] = _parse_date(updates["birthday"])
 
@@ -347,10 +503,11 @@ class ToolExecutor:
             })
 
         path = self._store.write_person(updated)
+        action = "Created" if create else "Updated"
         self._git.auto_commit(
-            "people", f"Updated {updated.display_name}", paths=[path],
+            "people", f"{action} {updated.display_name}", paths=[path],
         )
-        return {"updated": person_id, "display_name": updated.display_name}
+        return {"updated": person_id, "display_name": updated.display_name, "created": create}
 
     async def _handle_update_locations(self, args: dict[str, Any]) -> Any:
         locations = args.get("locations", {})
@@ -372,6 +529,33 @@ class ToolExecutor:
         self._git.auto_commit("preferences", "Added note")
         return {"updated": True, "note": note}
 
+    async def _handle_list_groups(self, args: dict[str, Any]) -> Any:
+        groups = self._store.read_all_groups()
+        return {
+            "groups": [
+                {
+                    "group_id": g.group_id,
+                    "display_name": g.display_name,
+                    "color": g.color,
+                }
+                for g in groups
+            ]
+        }
+
+    async def _handle_update_group(self, args: dict[str, Any]) -> Any:
+        group_id = args.get("group_id", "")
+        display_name = args.get("display_name", "")
+        if not group_id or not display_name:
+            return {"error": "group_id and display_name are required"}
+        group = Group(
+            group_id=group_id,
+            display_name=display_name,
+            color=args.get("color"),
+        )
+        path = self._store.write_group(group)
+        self._git.auto_commit("groups", f"Updated group {display_name}", paths=[path])
+        return {"updated": group_id, "display_name": display_name}
+
     def _find_unmatched_people(self, people_names: list[str]) -> tuple[list[str], list[str]]:
         """Split names into matched (existing) and unmatched (unknown)."""
         all_people = self._store.read_all_people()
@@ -388,13 +572,15 @@ class ToolExecutor:
     def _find_near_matches(self, name: str) -> list[str]:
         """Find existing people whose names are similar to the given name."""
         all_people = self._store.read_all_people()
-        name_lower = name.lower()
-        suggestions: list[str] = []
-        for p in all_people:
-            existing = p.display_name.lower()
-            if name_lower in existing or existing in name_lower:
-                suggestions.append(p.display_name)
-        return suggestions
+        scored = [
+            (p.display_name, _score_person_match(name, p))
+            for p in all_people
+        ]
+        return [
+            display_name for display_name, s in
+            sorted(scored, key=lambda x: x[1], reverse=True)
+            if s >= _FUZZY_THRESHOLD
+        ]
 
     def _auto_create_people(self, people_names: list[str], memory_date: date) -> None:
         """Auto-create Person files for the given names."""
@@ -405,7 +591,7 @@ class ToolExecutor:
                 new_person = Person(
                     person_id=_slugify(name),
                     display_name=name,
-                    relationship="unknown",
+                    relationship=["unknown"],
                 )
                 path = self._store.write_person(new_person)
                 self._git.auto_commit(

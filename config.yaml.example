@@ -8,6 +8,7 @@ llm:
   api_key: "YOUR_API_KEY"
   morning_model: "claude-sonnet-4-6"            # creative writing (digests)
   parsing_model: "gpt-4.1-mini"                 # fast structured extraction
+  verify_traces: false                           # LLM post-response audit (adds latency + cost)
 
 # Default schedule — databases inherit this unless they override it
 schedule:
