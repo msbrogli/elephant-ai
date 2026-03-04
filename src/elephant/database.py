@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from elephant.flows.evening_checkin import EveningCheckinFlow
     from elephant.flows.monthly_report import MonthlyReportFlow
     from elephant.flows.morning_digest import MorningDigestFlow
+    from elephant.flows.weekly_recap import WeeklyRecapFlow
     from elephant.git_ops import GitRepo
     from elephant.messaging.base import MessagingClient
 
@@ -31,4 +32,5 @@ class DatabaseInstance:
     evening: EveningCheckinFlow
     question_mgr: QuestionManager
     monthly_report: MonthlyReportFlow
+    weekly_recap: WeeklyRecapFlow
     schedule: ScheduleConfig

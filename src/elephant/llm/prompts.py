@@ -212,6 +212,53 @@ def evening_checkin(
     ]
 
 
+def weekly_recap(
+    memory_count: int,
+    unique_people: int,
+    highlights: list[dict[str, Any]],
+    people: list[Person],
+    prefs: PreferencesFile,
+) -> list[dict[str, str]]:
+    """Prompt to generate a weekly memory recap narrative."""
+    context_str = _build_context_str(people, prefs)
+    tone = prefs.tone_preference
+
+    highlights_str = ""
+    if highlights:
+        parts: list[str] = []
+        for h in highlights:
+            entry = (
+                f"Date: {h.get('date')}\nTitle: {h.get('title')}\n"
+                f"Description: {h.get('description')}\n"
+                f"People: {h.get('people')}\nType: {h.get('type')}"
+            )
+            parts.append(entry)
+        highlights_str = "\n---\n".join(parts)
+
+    user_content = (
+        f"This week: {memory_count} memories logged, "
+        f"{unique_people} people mentioned.\n\n"
+        f"Highlights:\n\n{highlights_str}"
+        if highlights_str
+        else f"This week: {memory_count} memories logged."
+    )
+
+    return [
+        {
+            "role": "system",
+            "content": (
+                "You are a warm family assistant. Generate a short weekly recap that "
+                "summarizes the past week's memories into a mini-narrative. "
+                "Highlight the most meaningful moments and people involved. "
+                f"Tone: {tone.style}. Length: {tone.length}.\n\n"
+                "If no memories were logged, write a brief encouraging message.\n\n"
+                f"Family context:\n{context_str}"
+            ),
+        },
+        {"role": "user", "content": user_content},
+    ]
+
+
 def classify_intent(text: str, has_recent_digest: bool) -> list[dict[str, str]]:
     """Prompt to classify message intent when ambiguous."""
     digest_note = " A digest was recently sent." if has_recent_digest else ""

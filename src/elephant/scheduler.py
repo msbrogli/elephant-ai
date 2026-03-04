@@ -91,6 +91,42 @@ class Scheduler:
 
         self._tasks.append(asyncio.ensure_future(_loop()))
 
+    def schedule_weekly(
+        self,
+        weekday: int,
+        time_str: str,
+        callback: ScheduleCallback,
+        name: str = "",
+    ) -> None:
+        """Schedule a callback to run on a specific weekday at a given time.
+
+        weekday: 0=Monday .. 6=Sunday (same as date.weekday()).
+        """
+        hour, minute = (int(x) for x in time_str.split(":"))
+
+        async def _loop() -> None:
+            while self._running:
+                now = datetime.now(self._tz)
+                # Days until target weekday
+                days_ahead = (weekday - now.weekday()) % 7
+                target = (now + timedelta(days=days_ahead)).replace(
+                    hour=hour, minute=minute, second=0, microsecond=0,
+                )
+                if target <= now:
+                    target += timedelta(weeks=1)
+                wait_seconds = (target - now).total_seconds()
+                label = name or f"weekly@{weekday}/{time_str}"
+                logger.info("Scheduler: %s next run in %.0fs", label, wait_seconds)
+                await asyncio.sleep(wait_seconds)
+                if not self._running:
+                    break
+                try:
+                    await callback()
+                except Exception:
+                    logger.exception("Scheduler: %s failed", label)
+
+        self._tasks.append(asyncio.ensure_future(_loop()))
+
     def schedule_periodic(
         self,
         interval_seconds: float,

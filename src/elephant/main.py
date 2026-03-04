@@ -24,6 +24,7 @@ from elephant.flows.anytime_log import AnytimeLogFlow
 from elephant.flows.evening_checkin import EveningCheckinFlow
 from elephant.flows.monthly_report import MonthlyReportFlow
 from elephant.flows.morning_digest import MorningDigestFlow
+from elephant.flows.weekly_recap import WeeklyRecapFlow
 from elephant.git_ops import GitRepo
 from elephant.health import create_app
 from elephant.llm.client import LLMClient
@@ -162,6 +163,12 @@ async def run(
             messaging=messaging,
         )
         monthly = MonthlyReportFlow(store=store, messaging=messaging)
+        weekly = WeeklyRecapFlow(
+            store=store,
+            llm=llm,
+            model=config.llm.morning_model,
+            messaging=messaging,
+        )
 
         db = DatabaseInstance(
             name=db_cfg.name,
@@ -174,6 +181,7 @@ async def run(
             evening=evening,
             question_mgr=question_mgr,
             monthly_report=monthly,
+            weekly_recap=weekly,
             schedule=db_cfg.schedule,
         )
         router.register_database(db)
@@ -195,6 +203,10 @@ async def run(
             1, db.schedule.monthly_report, db.monthly_report.run,
             name=f"{db.name}:monthly_report",
         )
+        sched.schedule_weekly(
+            6, db.schedule.weekly_recap, db.weekly_recap.run,
+            name=f"{db.name}:weekly_recap",
+        )
         sched.schedule_periodic(
             900, db.question_mgr.process_pending,
             name=f"{db.name}:question_manager",
@@ -207,6 +219,7 @@ async def run(
         flows[f"{db.name}:morning_digest"] = db.morning.run
         flows[f"{db.name}:evening_checkin"] = db.evening.run
         flows[f"{db.name}:monthly_report"] = db.monthly_report.run
+        flows[f"{db.name}:weekly_recap"] = db.weekly_recap.run
         flows[f"{db.name}:question_manager"] = db.question_mgr.process_pending
 
     # 7. Start web server

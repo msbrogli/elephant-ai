@@ -237,6 +237,7 @@ class DailyMetrics(BaseModel):
     questions_asked: int = 0
     questions_answered: int = 0
     checkins_sent: int = 0
+    weekly_recaps_sent: int = 0
 
 
 class MetricsFile(BaseModel):
