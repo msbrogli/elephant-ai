@@ -16,6 +16,7 @@ class LLMConfig:
     morning_model: str = "claude-sonnet-4-6"
     parsing_model: str = "gpt-4.1-mini"
     verify_traces: bool = False
+    guardrail_output: bool = True
 
 
 @dataclass(frozen=True)

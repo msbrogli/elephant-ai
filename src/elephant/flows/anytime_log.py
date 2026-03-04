@@ -37,6 +37,7 @@ class AnytimeLogFlow:
         history_limit: int = 500,
         database_name: str = "",
         verify_traces: bool = False,
+        guardrail_output: bool = True,
     ) -> None:
         self._store = store
         self._llm = llm
@@ -48,6 +49,7 @@ class AnytimeLogFlow:
             store, llm, parsing_model, git,
             history_limit=history_limit,
             verify_traces=verify_traces,
+            guardrail_output=guardrail_output,
         )
 
     @staticmethod

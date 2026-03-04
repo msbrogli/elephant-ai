@@ -139,6 +139,7 @@ async def run(
             history_limit=db_cfg.chat_history_limit,
             database_name=db_cfg.name,
             verify_traces=config.llm.verify_traces,
+            guardrail_output=config.llm.guardrail_output,
         )
         morning = MorningDigestFlow(
             store=store,

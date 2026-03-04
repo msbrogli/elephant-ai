@@ -244,7 +244,8 @@ class TestConversationalAgent:
         result = await agent.handle("Do something", "Telegram")
         assert result == "Sorry, I had trouble processing that."
         assert llm.chat_with_tools.call_count == agent.MAX_TOOL_ROUNDS
-        llm.chat.assert_called_once()
+        # llm.chat is called multiple times: injection check, final fallback, output sanitizer
+        assert llm.chat.call_count >= 1
 
 
 class TestNeedsReprompt:
