@@ -48,6 +48,7 @@ def _make_db(
         morning=MagicMock(),
         evening=MagicMock(),
         question_mgr=MagicMock(),
+        monthly_report=MagicMock(),
         schedule=ScheduleConfig(),
     )
 

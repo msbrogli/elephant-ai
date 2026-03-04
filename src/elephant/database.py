@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from elephant.data.store import DataStore
     from elephant.flows.anytime_log import AnytimeLogFlow
     from elephant.flows.evening_checkin import EveningCheckinFlow
+    from elephant.flows.monthly_report import MonthlyReportFlow
     from elephant.flows.morning_digest import MorningDigestFlow
     from elephant.git_ops import GitRepo
     from elephant.messaging.base import MessagingClient
@@ -29,4 +30,5 @@ class DatabaseInstance:
     morning: MorningDigestFlow
     evening: EveningCheckinFlow
     question_mgr: QuestionManager
+    monthly_report: MonthlyReportFlow
     schedule: ScheduleConfig

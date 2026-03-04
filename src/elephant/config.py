@@ -46,6 +46,7 @@ class MessagingConfig:
 class ScheduleConfig:
     morning_digest: str = "07:00"
     evening_checkin: str = "20:00"
+    monthly_report: str = "09:00"
     timezone: str = "America/Chicago"
 
 

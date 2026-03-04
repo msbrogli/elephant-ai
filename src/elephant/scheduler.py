@@ -1,6 +1,7 @@
 """Pure asyncio daily/periodic scheduler using zoneinfo."""
 
 import asyncio
+import calendar
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
@@ -36,6 +37,49 @@ class Scheduler:
                     target += timedelta(days=1)
                 wait_seconds = (target - now).total_seconds()
                 label = name or f"daily@{time_str}"
+                logger.info("Scheduler: %s next run in %.0fs", label, wait_seconds)
+                await asyncio.sleep(wait_seconds)
+                if not self._running:
+                    break
+                try:
+                    await callback()
+                except Exception:
+                    logger.exception("Scheduler: %s failed", label)
+
+        self._tasks.append(asyncio.ensure_future(_loop()))
+
+    def schedule_monthly(
+        self,
+        day: int,
+        time_str: str,
+        callback: ScheduleCallback,
+        name: str = "",
+    ) -> None:
+        """Schedule a callback to run on a specific day of the month at a given time."""
+        hour, minute = (int(x) for x in time_str.split(":"))
+
+        async def _loop() -> None:
+            while self._running:
+                now = datetime.now(self._tz)
+                # Find the next occurrence of the target day
+                year, month = now.year, now.month
+                target = now.replace(
+                    day=min(day, calendar.monthrange(year, month)[1]),
+                    hour=hour, minute=minute, second=0, microsecond=0,
+                )
+                if target <= now:
+                    # Move to next month
+                    if month == 12:
+                        year += 1
+                        month = 1
+                    else:
+                        month += 1
+                    target = target.replace(
+                        year=year, month=month,
+                        day=min(day, calendar.monthrange(year, month)[1]),
+                    )
+                wait_seconds = (target - now).total_seconds()
+                label = name or f"monthly@{day}/{time_str}"
                 logger.info("Scheduler: %s next run in %.0fs", label, wait_seconds)
                 await asyncio.sleep(wait_seconds)
                 if not self._running:
