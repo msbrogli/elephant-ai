@@ -4,6 +4,7 @@ import TraceList from './pages/TraceList'
 import TraceDetail from './pages/TraceDetail'
 import PeopleGraph from './pages/PeopleGraph'
 import MemoryTimeline from './pages/MemoryTimeline'
+import DigestHistory from './pages/DigestHistory'
 
 function App() {
   return (
@@ -12,6 +13,7 @@ function App() {
       <Route path="/:dbName" element={<TraceList />} />
       <Route path="/:dbName/people" element={<PeopleGraph />} />
       <Route path="/:dbName/timeline" element={<MemoryTimeline />} />
+      <Route path="/:dbName/digests" element={<DigestHistory />} />
       <Route path="/:dbName/:traceId" element={<TraceDetail />} />
     </Routes>
   )

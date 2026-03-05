@@ -16,6 +16,8 @@ from elephant.data.models import (
     ChatHistoryFile,
     ChurnStateFile,
     DailyMetrics,
+    DigestHistoryEntry,
+    DigestHistoryFile,
     DigestState,
     Group,
     Memory,
@@ -366,6 +368,24 @@ class DataStore:
             "churn_state.yaml",
             state.model_dump(mode="json"),
         )
+
+    # --- Digest History ---
+
+    def read_digest_history(self) -> DigestHistoryFile:
+        raw = self._read_single_file("digest_history.yaml")
+        return DigestHistoryFile.model_validate({"digests": raw.get("digests", [])})
+
+    def write_digest_history(self, history: DigestHistoryFile) -> None:
+        self._write_single_file(
+            "digest_history.yaml",
+            history.model_dump(mode="json", exclude_none=True),
+        )
+
+    def append_digest_history(self, entry: DigestHistoryEntry) -> None:
+        """Append a single digest entry to the history."""
+        history = self.read_digest_history()
+        history.digests.append(entry)
+        self.write_digest_history(history)
 
     # --- Milestone State ---
 

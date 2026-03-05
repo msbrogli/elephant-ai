@@ -236,6 +236,33 @@ async def memories_list_handler(request: web.Request) -> web.Response:
 
 
 # ---------------------------------------------------------------------------
+# GET /api/digests/{db_name}?page=0&per_page=20
+# ---------------------------------------------------------------------------
+
+async def digests_list_handler(request: web.Request) -> web.Response:
+    """Return paginated digest history for a database, newest first."""
+    db = _find_db(request)
+    if db is None:
+        db_name = request.match_info["db_name"]
+        return web.json_response({"error": f"unknown database: {db_name}"}, status=404)
+
+    page = int(request.query.get("page", "0"))
+    per_page = int(request.query.get("per_page", "20"))
+
+    history = db.store.read_digest_history()
+    # Newest first
+    all_digests = list(reversed(history.digests))
+    total = len(all_digests)
+    offset = page * per_page
+    page_digests = all_digests[offset : offset + per_page]
+
+    return web.json_response({
+        "digests": [d.model_dump(mode="json") for d in page_digests],
+        "total": total,
+    })
+
+
+# ---------------------------------------------------------------------------
 # SPA catch-all: serve index.html for client-side routing
 # ---------------------------------------------------------------------------
 
@@ -259,6 +286,7 @@ def register_routes(app: web.Application, router: ChatRouter) -> None:
     app.router.add_get("/api/people/{db_name}", people_handler)
     app.router.add_get("/api/groups/{db_name}", groups_handler)
     app.router.add_get("/api/memories/{db_name}", memories_list_handler)
+    app.router.add_get("/api/digests/{db_name}", digests_list_handler)
 
     # Static assets from the frontend build
     dist_dir = os.path.join(os.path.dirname(__file__), "..", "..", "..", "frontend", "dist")

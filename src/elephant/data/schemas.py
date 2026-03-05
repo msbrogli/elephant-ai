@@ -509,6 +509,38 @@ _schema:
 questions: []
 """
 
+DIGEST_HISTORY_SCHEMA = """\
+_schema:
+  version: 1
+  description: "Archive of all sent digests. Append-only, newest last."
+  fields:
+    digests:
+      type: list[object]
+      required: false
+      default: []
+      description: "List of sent digest entries"
+      fields:
+        sent_at:
+          type: datetime
+          required: true
+          description: "When the digest was sent"
+        text:
+          type: string
+          required: true
+          description: "Full text of the digest"
+        memory_ids:
+          type: list[string]
+          required: false
+          default: []
+          description: "Memory IDs referenced in the digest"
+        message_id:
+          type: string
+          required: false
+          description: "Messaging platform message ID"
+
+digests: []
+"""
+
 MILESTONE_STATE_SCHEMA = """\
 _schema:
   version: 1
@@ -562,6 +594,7 @@ SINGLE_FILE_SCHEMAS: dict[str, str] = {
     "metrics.yaml": METRICS_SCHEMA,
     "nudge_state.yaml": NUDGE_STATE_SCHEMA,
     "authorized_chats.yaml": AUTHORIZED_CHATS_SCHEMA,
+    "digest_history.yaml": DIGEST_HISTORY_SCHEMA,
     "milestone_state.yaml": MILESTONE_STATE_SCHEMA,
     "chat_history.yaml": CHAT_HISTORY_SCHEMA,
 }

@@ -239,14 +239,25 @@ class MorningDigestFlow:
         first_success = next(r for r in results if r.success)
 
         # 5. Update digest state
+        memory_ids = [m.id for m in top_memories]
         state = self._store.read_digest_state()
         state = state.model_copy(update={
             "last_digest_sent_at": now,
-            "last_digest_memory_ids": [m.id for m in top_memories],
+            "last_digest_memory_ids": memory_ids,
             "last_digest_message_id": first_success.message_id,
             "last_digest_text": digest_text,
         })
         self._store.write_digest_state(state)
+
+        # 5b. Archive to digest history
+        from elephant.data.models import DigestHistoryEntry
+
+        self._store.append_digest_history(DigestHistoryEntry(
+            sent_at=now,
+            text=digest_text,
+            memory_ids=memory_ids,
+            message_id=first_success.message_id,
+        ))
 
         # 6. Record nudges sent
         if nudges:

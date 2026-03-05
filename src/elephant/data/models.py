@@ -279,6 +279,20 @@ class ChurnStateFile(BaseModel):
     digest_paused_until: date | None = None
 
 
+# --- Digest History ---
+
+
+class DigestHistoryEntry(BaseModel):
+    sent_at: datetime
+    text: str
+    memory_ids: list[str] = Field(default_factory=list)
+    message_id: str | None = None
+
+
+class DigestHistoryFile(BaseModel):
+    digests: list[DigestHistoryEntry] = Field(default_factory=list)
+
+
 # --- Milestone State ---
 
 
