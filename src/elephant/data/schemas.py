@@ -505,6 +505,34 @@ _schema:
 questions: []
 """
 
+MILESTONE_STATE_SCHEMA = """\
+_schema:
+  version: 1
+  description: "Tracks memory milestones and daily logging streaks."
+  fields:
+    last_celebrated_count:
+      type: integer
+      default: 0
+      description: "Total memory count at the last milestone celebration"
+    current_streak:
+      type: integer
+      default: 0
+      description: "Current consecutive days with at least one memory logged"
+    longest_streak:
+      type: integer
+      default: 0
+      description: "Longest streak ever recorded"
+    last_memory_date:
+      type: date
+      required: false
+      description: "Date of the most recently logged memory"
+
+last_celebrated_count: 0
+current_streak: 0
+longest_streak: 0
+last_memory_date: null
+"""
+
 CHAT_HISTORY_SCHEMA = """\
 _schema:
   version: 1
@@ -530,5 +558,6 @@ SINGLE_FILE_SCHEMAS: dict[str, str] = {
     "metrics.yaml": METRICS_SCHEMA,
     "nudge_state.yaml": NUDGE_STATE_SCHEMA,
     "authorized_chats.yaml": AUTHORIZED_CHATS_SCHEMA,
+    "milestone_state.yaml": MILESTONE_STATE_SCHEMA,
     "chat_history.yaml": CHAT_HISTORY_SCHEMA,
 }

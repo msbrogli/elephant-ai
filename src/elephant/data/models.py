@@ -278,6 +278,16 @@ class ChurnStateFile(BaseModel):
     digest_paused_until: date | None = None
 
 
+# --- Milestone State ---
+
+
+class MilestoneStateFile(BaseModel):
+    last_celebrated_count: int = 0
+    current_streak: int = 0
+    longest_streak: int = 0
+    last_memory_date: date | None = None
+
+
 # --- Authorized Chats ---
 
 

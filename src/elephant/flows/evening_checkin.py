@@ -7,6 +7,7 @@ from datetime import date
 from typing import TYPE_CHECKING
 
 from elephant.brain.engagement import compute_churn_signals, format_churn_for_checkin
+from elephant.brain.milestones import format_streak_for_checkin
 from elephant.flows.contact_nudges import (
     find_overdue_contacts,
     format_nudges_for_prompt,
@@ -73,9 +74,13 @@ class EveningCheckinFlow:
         )
         churn_text = format_churn_for_checkin(churn_signals)
 
+        # Streak info
+        milestone_state = self._store.read_milestone_state()
+        streak_text = format_streak_for_checkin(milestone_state.current_streak)
+
         messages = evening_checkin(
             people, prefs, memory_count_today=len(todays_memories),
-            nudges=nudges_text, churn_signals=churn_text,
+            nudges=nudges_text, churn_signals=churn_text, streak_text=streak_text,
         )
         response = await self._llm.chat(messages, model=self._model)
         checkin_text = (response.content or "").strip()

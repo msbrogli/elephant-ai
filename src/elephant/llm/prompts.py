@@ -204,6 +204,7 @@ def evening_checkin(
     memory_count_today: int = 0,
     nudges: str | None = None,
     churn_signals: str | None = None,
+    streak_text: str | None = None,
 ) -> list[dict[str, str]]:
     """Prompt to generate an evening check-in message."""
     context_str = _build_context_str(people, prefs)
@@ -215,6 +216,8 @@ def evening_checkin(
         )
 
     extra = ""
+    if streak_text:
+        extra += f"\n\nStreak: {streak_text}\n(Mention the streak warmly to encourage them.)"
     if nudges:
         extra += (
             f"\n\n{nudges}\n(Gently mention reaching out, "

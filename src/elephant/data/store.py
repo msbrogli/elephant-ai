@@ -20,6 +20,7 @@ from elephant.data.models import (
     Group,
     Memory,
     MetricsFile,
+    MilestoneStateFile,
     NudgeStateFile,
     PendingQuestionsFile,
     Person,
@@ -363,6 +364,23 @@ class DataStore:
     def write_churn_state(self, state: ChurnStateFile) -> None:
         self._write_single_file(
             "churn_state.yaml",
+            state.model_dump(mode="json"),
+        )
+
+    # --- Milestone State ---
+
+    def read_milestone_state(self) -> MilestoneStateFile:
+        raw = self._read_single_file("milestone_state.yaml")
+        return MilestoneStateFile.model_validate({
+            "last_celebrated_count": raw.get("last_celebrated_count", 0),
+            "current_streak": raw.get("current_streak", 0),
+            "longest_streak": raw.get("longest_streak", 0),
+            "last_memory_date": raw.get("last_memory_date"),
+        })
+
+    def write_milestone_state(self, state: MilestoneStateFile) -> None:
+        self._write_single_file(
+            "milestone_state.yaml",
             state.model_dump(mode="json"),
         )
 

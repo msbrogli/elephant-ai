@@ -255,14 +255,20 @@ class ToolExecutor:
         if auto_create:
             self._auto_create_people(memory.people, memory.date)
 
+        # Check milestones & update streak
+        milestone_msg = self._check_milestone_and_streak()
+
         logger.info("Agent created memory: %s", memory_id)
-        return {
+        result: dict[str, Any] = {
             "created": memory_id,
             "memory_id": memory_id,
             "title": memory.title,
             "date": str(memory.date),
             "note": "Use this exact memory_id for any future update_memory or get_memory calls.",
         }
+        if milestone_msg:
+            result["milestone_celebration"] = milestone_msg
+        return result
 
     async def _handle_update_memory(self, args: dict[str, Any]) -> Any:
         from datetime import UTC
@@ -650,6 +656,43 @@ class ToolExecutor:
                     "people", f"Auto-created {name}", paths=[path],
                 )
                 existing.add(name.lower())
+
+    def _check_milestone_and_streak(self) -> str | None:
+        """Check for milestone/streak after a memory is created. Returns celebration msg."""
+        from elephant.brain.milestones import (
+            check_memory_milestone,
+            compute_streak,
+            format_milestone_message,
+        )
+
+        today = date.today()
+        state = self._store.read_milestone_state()
+
+        # Update streak
+        streak_delta, is_continuation = compute_streak(state.last_memory_date, today)
+        new_streak = (
+            state.current_streak + streak_delta if is_continuation else streak_delta
+        )
+        longest = max(state.longest_streak, new_streak)
+
+        # Count total memories
+        total = len(self._store.list_memories(limit=None))
+
+        # Check milestone
+        milestone = check_memory_milestone(total, state.last_celebrated_count)
+        new_celebrated = milestone if milestone is not None else state.last_celebrated_count
+
+        state = state.model_copy(update={
+            "current_streak": new_streak,
+            "longest_streak": longest,
+            "last_memory_date": today,
+            "last_celebrated_count": new_celebrated,
+        })
+        self._store.write_milestone_state(state)
+
+        if milestone is not None:
+            return format_milestone_message(milestone)
+        return None
 
     async def _handle_describe_attachment(self, args: dict[str, Any]) -> Any:
         file_path = args.get("file_path", "")
