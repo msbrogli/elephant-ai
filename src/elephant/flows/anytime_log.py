@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import base64
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from elephant.brain.clarification import process_answer
 from elephant.brain.feedback import process_feedback
 from elephant.context_resolver import Intent, resolve_intent
 from elephant.data.models import RawMessage, RawMessageAttachment
-from elephant.llm.prompts import describe_image
+from elephant.llm.prompts import _MIME_TYPES, describe_image
 from elephant.memory_parser import parse_memories_from_document
 from elephant.tools.agent import ConversationalAgent
 from elephant.tracing import IntentStep, LLMCallStep, finish_trace, record_step, start_trace
@@ -157,9 +158,12 @@ class AnytimeLogFlow:
                 people = self._store.read_all_people()
                 prefs = self._store.read_preferences()
                 try:
-                    with open(photo_attachments[0].file_path, "rb") as f:
+                    photo_path = photo_attachments[0].file_path
+                    with open(photo_path, "rb") as f:
                         image_b64 = base64.b64encode(f.read()).decode()
-                    messages = describe_image(image_b64, people, prefs)
+                    photo_suffix = Path(photo_path).suffix.lower()
+                    mime_type = _MIME_TYPES.get(photo_suffix, "image/jpeg")
+                    messages = describe_image(image_b64, people, prefs, mime_type=mime_type)
                     response = await self._llm.chat(
                         messages, model=self._parsing_model, temperature=0.5
                     )

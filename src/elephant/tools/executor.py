@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from elephant.data.models import Correction, CurrentThread, Group, MediaLinks, Memory, Person
-from elephant.llm.prompts import describe_image
+from elephant.llm.prompts import _MIME_TYPES, describe_image
 from elephant.tools.definitions import ALLOWED_TOOL_NAMES, validate_tool_args
 
 if TYPE_CHECKING:
@@ -721,9 +721,10 @@ class ToolExecutor:
             # Vision API for images
             image_bytes = path.read_bytes()
             image_b64 = base64.b64encode(image_bytes).decode()
+            mime_type = _MIME_TYPES.get(suffix, "image/jpeg")
             people = self._store.read_all_people()
             prefs = self._store.read_preferences()
-            messages = describe_image(image_b64, people, prefs)
+            messages = describe_image(image_b64, people, prefs, mime_type=mime_type)
             response = await self._llm.chat(messages, model=self._model, temperature=0.5)
             return {"description": response.content or "Could not describe image."}
 

@@ -434,10 +434,21 @@ def generate_question_text(
     ]
 
 
+_MIME_TYPES: dict[str, str] = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+}
+
+
 def describe_image(
     image_base64: str,
     people: list[Person],
     prefs: PreferencesFile,
+    *,
+    mime_type: str = "image/jpeg",
 ) -> list[dict[str, Any]]:
     """Prompt to describe an image for a family memory log using vision."""
     context_str = _build_vision_context_str(people)
@@ -459,7 +470,7 @@ def describe_image(
                 {"type": "text", "text": "Describe this photo for a family memory log."},
                 {
                     "type": "image_url",
-                    "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"},
+                    "image_url": {"url": f"data:{mime_type};base64,{image_base64}"},
                 },
             ],
         },

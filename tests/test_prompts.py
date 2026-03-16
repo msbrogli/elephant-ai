@@ -5,6 +5,7 @@ from elephant.llm.prompts import (
     check_injection,
     classify_intent,
     classify_sentiment,
+    describe_image,
     enrich_memory,
     evening_checkin,
     generate_clarification,
@@ -115,6 +116,27 @@ class TestGenerateQuestionText:
             "memory_enrichment", "20260224_park", SAMPLE_PEOPLE, SAMPLE_PREFS,
         )
         _assert_valid_messages(msgs)
+
+
+class TestDescribeImage:
+    def test_default_mime_type(self):
+        msgs = describe_image("abc123base64", SAMPLE_PEOPLE, SAMPLE_PREFS)
+        assert isinstance(msgs, list)
+        assert len(msgs) == 2
+        user_content = msgs[1]["content"]
+        assert isinstance(user_content, list)
+        image_block = user_content[1]
+        assert "data:image/jpeg;base64," in image_block["image_url"]["url"]
+
+    def test_png_mime_type(self):
+        msgs = describe_image("abc123base64", SAMPLE_PEOPLE, SAMPLE_PREFS, mime_type="image/png")
+        image_block = msgs[1]["content"][1]
+        assert "data:image/png;base64," in image_block["image_url"]["url"]
+
+    def test_webp_mime_type(self):
+        msgs = describe_image("abc123base64", SAMPLE_PEOPLE, SAMPLE_PREFS, mime_type="image/webp")
+        image_block = msgs[1]["content"][1]
+        assert "data:image/webp;base64," in image_block["image_url"]["url"]
 
 
 class TestCheckInjection:

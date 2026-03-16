@@ -792,6 +792,63 @@ class TestDescribeAttachment:
         assert "description" in result
         llm.chat.assert_called_once()
 
+    async def test_jpeg_uses_correct_mime_type(self, executor):
+        ex, store, git, llm = executor
+        media = store.media_dir()
+        img = os.path.join(media, "photo.jpg")
+        with open(img, "wb") as f:
+            f.write(b"\xff\xd8\xff\xe0fake-jpeg")
+
+        llm.chat = AsyncMock(return_value=LLMResponse(
+            content="A photo.", model="m", usage={},
+        ))
+        tc = ToolCall(
+            id="1", function_name="describe_attachment",
+            arguments=json.dumps({"file_path": img}),
+        )
+        await ex.execute(tc)
+        messages = llm.chat.call_args[0][0]
+        image_url = messages[1]["content"][1]["image_url"]["url"]
+        assert image_url.startswith("data:image/jpeg;base64,")
+
+    async def test_png_uses_correct_mime_type(self, executor):
+        ex, store, git, llm = executor
+        media = store.media_dir()
+        img = os.path.join(media, "photo.png")
+        with open(img, "wb") as f:
+            f.write(b"\x89PNGfake-png")
+
+        llm.chat = AsyncMock(return_value=LLMResponse(
+            content="A photo.", model="m", usage={},
+        ))
+        tc = ToolCall(
+            id="1", function_name="describe_attachment",
+            arguments=json.dumps({"file_path": img}),
+        )
+        await ex.execute(tc)
+        messages = llm.chat.call_args[0][0]
+        image_url = messages[1]["content"][1]["image_url"]["url"]
+        assert image_url.startswith("data:image/png;base64,")
+
+    async def test_webp_uses_correct_mime_type(self, executor):
+        ex, store, git, llm = executor
+        media = store.media_dir()
+        img = os.path.join(media, "photo.webp")
+        with open(img, "wb") as f:
+            f.write(b"RIFFfake-webp")
+
+        llm.chat = AsyncMock(return_value=LLMResponse(
+            content="A photo.", model="m", usage={},
+        ))
+        tc = ToolCall(
+            id="1", function_name="describe_attachment",
+            arguments=json.dumps({"file_path": img}),
+        )
+        await ex.execute(tc)
+        messages = llm.chat.call_args[0][0]
+        image_url = messages[1]["content"][1]["image_url"]["url"]
+        assert image_url.startswith("data:image/webp;base64,")
+
 
 class TestUnknownTool:
     async def test_returns_error(self, executor):

@@ -31,7 +31,13 @@ def _format_messages_as_prompt(messages: list[dict[str, Any]]) -> tuple[str | No
     for msg in messages:
         role = msg.get("role", "")
         content = msg.get("content", "")
-        if not isinstance(content, str):
+        if isinstance(content, list):
+            text_parts = [block["text"] for block in content if block.get("type") == "text"]
+            has_images = any(block.get("type") == "image_url" for block in content)
+            if has_images:
+                logger.warning("Agent SDK does not support images; image content was dropped")
+            content = "\n".join(text_parts)
+        elif not isinstance(content, str):
             content = str(content)
 
         if role == "system":
