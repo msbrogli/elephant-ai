@@ -25,8 +25,13 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "function": {
             "name": "list_memories",
             "description": (
-                "Search and list memories. Use to answer questions about what happened, "
-                "find memories by date, person, or topic."
+                "Search and filter memories. Returns summaries (id, date, title, type, "
+                "description, people, location) — not full details. Use when the user asks "
+                "'what happened last week?', 'show me memories with Dad', or 'any trips in "
+                "January?'. Supports filtering by date range, people, type, tags, and "
+                "free-text substring search in title/description. Returns newest-first, "
+                "default limit 20. For full details of a specific memory (tags, content, "
+                "corrections, media), use get_memory instead."
             ),
             "parameters": {
                 "type": "object",
@@ -58,11 +63,18 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                     },
                     "query": {
                         "type": "string",
-                        "description": "Free-text search in title and description",
+                        "description": (
+                            "Free-text substring search in title and description "
+                            "(case-insensitive, exact substring — not fuzzy or semantic). "
+                            "Use specific keywords."
+                        ),
                     },
                     "limit": {
                         "type": "integer",
-                        "description": "Max results to return (default 20)",
+                        "description": (
+                            "Max results to return (default 20, newest first). "
+                            "Set to a higher number or null for all results."
+                        ),
                     },
                 },
                 "required": [],
@@ -73,7 +85,13 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "get_memory",
-            "description": "Get full details of a specific memory by its ID.",
+            "description": (
+                "Get the complete record of a single memory by its ID, including all "
+                "fields: tags, content, corrections history, media, nostalgia_score, "
+                "participants, and attributes. Use when you already have a memory_id "
+                "(e.g. from list_memories results) and need full details. Do NOT use "
+                "this to search — use list_memories to find memories first."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -91,7 +109,13 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "function": {
             "name": "create_memory",
             "description": (
-                "Create a new memory. Use when the user describes something that happened."
+                "Create a new memory for a specific event or experience that happened on "
+                "a particular date. Use when the user describes something that happened: "
+                "'We went to the park yesterday', 'Mom's birthday was amazing'. Do NOT "
+                "use for general facts, preferences, or ongoing state — use add_note for "
+                "preferences and update_person for life updates (new job, new hobby). If "
+                "confidence is below 0.6, returns a clarification request instead of "
+                "saving. Unknown people trigger a warning unless auto_create_people=true."
             ),
             "parameters": {
                 "type": "object",
@@ -137,7 +161,11 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                     },
                     "nostalgia_score": {
                         "type": "number",
-                        "description": "0.5-2.0, higher for milestones",
+                        "description": (
+                            "0.5-2.0 importance weight. Use 0.5 for mundane daily events, "
+                            "1.0 for normal outings/celebrations, 1.5 for significant "
+                            "milestones, 2.0 for once-in-a-lifetime moments (birth, wedding)."
+                        ),
                     },
                     "tags": {
                         "type": "array",
@@ -146,7 +174,11 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                     },
                     "content": {
                         "type": "string",
-                        "description": "Full narrative prose of the memory",
+                        "description": (
+                            "Optional full narrative prose expanding on the description. "
+                            "Use for rich, detailed memories where the user provided a "
+                            "longer story."
+                        ),
                     },
                     "participants": {
                         "type": "array",
@@ -156,8 +188,9 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                     "confidence": {
                         "type": "number",
                         "description": (
-                            "Confidence score 0.0-1.0 for how sure you are about this memory. "
-                            "Low-confidence memories trigger clarification."
+                            "0.0-1.0. Set below 0.6 if key details are ambiguous or "
+                            "missing — this triggers a clarification request instead of "
+                            "saving. Default 1.0."
                         ),
                     },
                     "auto_create_people": {
@@ -185,7 +218,15 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "update_memory",
-            "description": "Update fields on an existing memory.",
+            "description": (
+                "Update fields on an existing memory by its ID. Use when the user "
+                "corrects or adds details to a previously saved memory: 'actually that "
+                "was at the beach, not the park', 'add Grandma to yesterday's dinner'. "
+                "For past memories (before today), changes are tracked as corrections "
+                "preserving history. Updatable fields: title, description, people, "
+                "location, tags, attributes. Requires a reason when updating past "
+                "memories. Do NOT use to create new memories — use create_memory instead."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -193,21 +234,34 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                         "type": "string",
                         "description": "The memory ID to update",
                     },
-                    "title": {"type": "string"},
-                    "description": {"type": "string"},
+                    "title": {
+                        "type": "string",
+                        "description": "New value to replace the existing one",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "New value to replace the existing one",
+                    },
                     "people": {
                         "type": "array",
                         "items": {"type": "string"},
+                        "description": "New value to replace the existing one",
                     },
-                    "location": {"type": "string"},
+                    "location": {
+                        "type": "string",
+                        "description": "New value to replace the existing one",
+                    },
                     "tags": {
                         "type": "array",
                         "items": {"type": "string"},
+                        "description": "New value to replace the existing one",
                     },
                     "reason": {
                         "type": "string",
                         "description": (
-                            "Reason for the update (required when updating past memories)"
+                            "Explanation of why this memory is being corrected "
+                            "(required for past memories, as changes are tracked "
+                            "in correction history)."
                         ),
                     },
                     "attributes": {
@@ -229,8 +283,10 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "function": {
             "name": "delete_memory",
             "description": (
-                "Delete a memory by ID. First call without confirm returns a preview. "
-                "You must call again with confirm=true to actually delete."
+                "Delete a memory by ID. This is a two-step process: the first call "
+                "(without confirm) returns a preview of what will be deleted; you must "
+                "call again with confirm=true to actually delete. Always show the preview "
+                "to the user and get confirmation before the second call."
             ),
             "parameters": {
                 "type": "object",
@@ -256,9 +312,14 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "function": {
             "name": "search_people",
             "description": (
-                "Search for people by name (partial match). Returns matches with "
-                "relationship, current threads, and last contact. Use to disambiguate "
-                "when the user mentions a person by first name."
+                "Find people by name using fuzzy matching. Returns matches with "
+                "person_id, display_name, relationship, match_score, current_threads, "
+                "and last_contact date. Use when the user mentions someone by first name "
+                "and you need to find their person_id, or to verify if someone already "
+                "exists before creating them. Handles partial names and nicknames. For a "
+                "full profile with life events, archived threads, and preferences, use "
+                "get_person with the person_id from these results. Do NOT use list_people "
+                "for name lookups — it returns everyone without filtering."
             ),
             "parameters": {
                 "type": "object",
@@ -277,8 +338,11 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "function": {
             "name": "get_person",
             "description": (
-                "Get full person profile by person_id including threads, "
-                "connections, life events."
+                "Get the complete profile of a person by their person_id, including "
+                "life_events, relationships, archived_threads, preferences, notes, and "
+                "attributes. Use when you need full details about someone (e.g. to answer "
+                "'tell me about John' or to check archived threads). Requires an exact "
+                "person_id — use search_people first if you only have a name."
             ),
             "parameters": {
                 "type": "object",
@@ -296,7 +360,14 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "list_people",
-            "description": "List all known people with summary info including current threads.",
+            "description": (
+                "List ALL known people with summary info: person_id, display_name, "
+                "relationship, birthday, groups, current_threads, and last_contact. "
+                "Use when the user asks 'who do I know?', 'show me everyone', or "
+                "'who haven't I talked to recently?'. Returns the entire roster — "
+                "do NOT use for finding a specific person by name (use search_people "
+                "instead)."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {},
@@ -309,10 +380,18 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "function": {
             "name": "update_person",
             "description": (
-                "Update a person's details, or create a new person if they don't exist yet. "
-                "Supports: birthday, other_names (nicknames), groups (list of group IDs), "
-                "relationship (list of strings), notes, current_threads, "
-                "interaction_frequency_target."
+                "Update a person's profile, or create a new person if they don't exist. "
+                "Use for ongoing life state changes: 'John got a new job', 'Sarah is "
+                "moving to Boston', 'add Mike's birthday'. Supports: display_name, "
+                "relationship, birthday, other_names (nicknames), groups, notes, "
+                "current_threads (replaces list), archive_threads (moves topics to "
+                "archive), interaction_frequency_target, and attributes (merged key-value "
+                "metadata like hobby, allergy, school). When creating (create=true): you "
+                "MUST first call search_people to verify the person doesn't exist, and you "
+                "MUST have their full name (first + family). Canonical field changes "
+                "(birthday, relationship, display_name) require force=true if they conflict "
+                "with existing values. Do NOT use for specific dated events — use "
+                "create_memory instead."
             ),
             "parameters": {
                 "type": "object",
@@ -417,7 +496,14 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "update_locations",
-            "description": "Update known locations in preferences.",
+            "description": (
+                "Add or update named locations in the family's preferences. Use when the "
+                "user mentions a new recurring place: 'we call Grandma's house The Ranch', "
+                "'our usual park is Riverside Park on 5th Ave'. Locations is a "
+                "name-to-description mapping (e.g. {\"The Ranch\": \"Grandma's house in "
+                "Montana\"}). Existing locations are preserved; only provided keys are "
+                "added or overwritten."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -435,7 +521,14 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "add_note",
-            "description": "Add a freeform note to preferences.",
+            "description": (
+                "Add a freeform note to the family's preferences. Use for general context, "
+                "preferences, or reminders that aren't tied to a specific date or person: "
+                "'we're vegetarian', 'prefer heartfelt tone in digests', 'anniversary is "
+                "always celebrated at The Ranch'. Do NOT use for dated events (use "
+                "create_memory) or person-specific facts (use update_person with attributes "
+                "or notes)."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -453,9 +546,12 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "function": {
             "name": "describe_attachment",
             "description": (
-                "Analyze an attached file. For images, returns a visual description. "
-                "For documents (text, JSON, CSV), returns the file contents. "
-                "Use the file_path from the [Attachments] info in the user's message."
+                "Analyze an attached file. For images (jpg, png, gif, webp): sends to "
+                "vision model and returns a narrative description of what's visible. For "
+                "documents (text, JSON, CSV): returns the raw file contents (truncated to "
+                "100KB). Use the file_path from the [Attachments] section in the user's "
+                "message. Always call this BEFORE creating a memory from an attachment — "
+                "describe first, then create_memory with the description."
             ),
             "parameters": {
                 "type": "object",
@@ -473,7 +569,11 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "list_groups",
-            "description": "List all people groups with their display names and colors.",
+            "description": (
+                "List all people groups with their group_id, display_name, and color. "
+                "Groups are flat tags (e.g. 'bjj', 'college', 'close-friends') used to "
+                "organize people."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {},
@@ -486,8 +586,10 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "function": {
             "name": "update_group",
             "description": (
-                "Create or update a people group. Groups are flat tags "
-                "like 'bjj', 'college', 'close-friends'."
+                "Create or update a people group. Groups are flat tags like 'bjj', "
+                "'college', 'close-friends' with a display name and optional hex color "
+                "for visualization. Use when the user defines a new group or wants to "
+                "rename/recolor an existing one."
             ),
             "parameters": {
                 "type": "object",
